@@ -170,20 +170,6 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <h3 className="text-sm font-bold text-foreground">Cross-Sensor Corroboration</h3>
-              <span className="text-[9px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 px-1.5 py-0.5 rounded">Novel</span>
-            </div>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              A sensor reads 172°C — within normal range, quality code "Good" — passes every threshold check. But its correlated sensors say the real temperature is 175°C. The sensor is wrong by 3°C, and <strong className="text-foreground">no historian in the world would flag it</strong>. Cross-sensor corroboration cross-references physically-coupled sensors to catch what every other tool misses.
-            </p>
-            <button onClick={() => navigate('/stats')} className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-400 hover:underline flex items-center gap-1">
-              Read how it works <ChevronRight className="w-3 h-3" />
-            </button>
-          </div>
-        </div>
-      </div>
 
       {/* Safety layer */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
