@@ -1,249 +1,218 @@
 # Pharma Data Integrity Inspector
 
-AI multi-agent system for detecting data integrity issues in pharmaceutical manufacturing sensor data.
+**4 AI agents that catch sensor data your historian misses — including sensors that are wrong but look perfectly normal.**
 
-## Problem
+Most pharma data quality tools check each sensor in isolation: thresholds, quality codes, range checks. They all miss the same thing — a sensor reading 172°C when the real temperature is 175°C. It passes every check. Quality code says "Good." No alarm fires. But the batch is compromised.
 
-Pharmaceutical manufacturing relies on trusted sensor data for quality control and regulatory compliance. However, PI historian systems accumulate data integrity issues:
+Cross-Sensor Corroboration fixes this by cross-referencing physically-coupled sensors. When a temperature sensor says one thing but the correlated pressure and flow sensors say another, we catch it — even though no individual threshold was breached.
 
-- **Sensor drift** (undetected for hours/days)
-- **Stuck values** (frozen tags)
-- **Impossible readings** (negative pressure, temperatures beyond physical limits)
-- **Correlation breakdowns** (related tags diverge)
-- **Quality code mismatches** (tag marked 'good' but data looks wrong)
-- **FDA 21 CFR Part 11** audit trail gaps
+---
 
-Operators lose trust in data. Engineers spend days manually auditing trends. Compliance teams struggle to prove data integrity during inspections.
+## Screenshots
 
-## Solution
+| Dashboard | Anomaly Detection | Cross-Sensor Corroboration |
+|---|---|---|
+| *[Dashboard]* | *[Anomalies]* | *[Corroboration]* |
 
-A multi-agent AI system that:
+---
 
-✅ Monitors 20 process tags streaming at 5-second intervals  
-✅ Applies 10 data integrity checks automatically  
-✅ Human-in-the-loop anomaly selection (AI flags, human decides)  
-✅ Generates root cause hypotheses with pharma context  
-✅ Produces PDF + HTML + JSON reports  
-✅ Full agent workflow transparency via toggle (Minimal/Full trace)  
-✅ Supports on-premise deployment (local LLM, air-gap ready architecture)
+## What It Does
 
-## Demo
+- **4 AI agents** orchestrated by LangGraph: Data Profiler → Anomaly Detector → (HITL gate) → Hypothesis Generator → Report Generator
+- **11 integrity checks** — 10 standard + Check 11: Cross-Sensor Corroboration (novel)
+- **Human-in-the-Loop gate** between Agent 2 and Agent 3 — you approve anomalies before AI generates root causes (FDA 21 CFR Part 11 aligned)
+- **Output Guardrail** — PII, batch numbers, credentials, and dangerous recommendations are blocked before any AI output reaches the user
+- **Causal tag simulator** with physics-based coupling (Clausius-Clapeyron, mass balance, pump curves) — not random noise
+- **Dark mode** with navy palette, data-driven navigation, Stats for Nerds page
 
-**2-minute video walkthrough**: [Link to video]
+## The Novel Check: Cross-Sensor Corroboration (Check 11)
 
-**Sample Reports**:
-- [Executive Summary PDF](reports/sample_executive.pdf)
-- [Detailed HTML Report](reports/sample_detailed.html)
-- [Raw Data JSON](reports/sample_data.json)
+Most data quality tools operate per-sensor. If a reading is within range and has a "Good" quality code, it passes. Check 11 does something different: it segments the correlation timeline between a suspect tag and its physically-coupled witness sensors. When the correlation pattern changes and the trend direction contradicts what physics predicts, the sensor is flagged — even though no individual threshold was breached.
+
+**Example:** TI-101 reports 172°C (normal range, Good quality). But PI-101 trends upward (suggesting 175°C+) and FI-201 rises (cooling compensating for heat you can't see). The sensor is wrong by 3°C. No historian catches that. We do.
+
+---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                 PHARMA DATA INTEGRITY INSPECTOR              │
-├─────────────────────────────────────────────────────────────┤
-│  Tag Simulator (20 tags) → Stream Ingest → PostgreSQL       │
-│                                          ↓                   │
-│  Agent 1: Data Profiler → Agent 2: Anomaly Detector         │
-│                                          ↓                   │
-│  HITL: User Selection → Agent 3: Hypothesis Generator       │
-│                                          ↓                   │
-│  Agent 4: Report Generator → PDF/HTML/JSON Export           │
-│                                          ↓                   │
-│  LangSmith Trace (Toggle: Minimal/Full)                     │
-└─────────────────────────────────────────────────────────────┘
+TagSimulator (20 tags, 5s interval, causal couplings + Silent Lie injection)
+    ↓
+Agent 1: Data Profiler ─── SQL + numpy + GPT-4o ─── builds baselines
+    ↓
+Agent 2: Anomaly Detector ─── 11 checks + GPT-4o ─── flags issues, AI analyzes patterns
+    ↓
+HITL Gate ─── human approves/rejects ─── FDA 21 CFR Part 11
+    ↓
+Agent 3: Hypothesis Generator ─── GPT-4o + domain KB ─── root causes + remediation
+    ↓
+Agent 4: Report Generator ─── GPT-4o + Jinja2 ─── PDF/HTML/JSON
+    ↓
+OutputGuardrail ─── PII, pharma-sensitive, dangerous recs ─── blocks before user sees
 ```
+
+---
 
 ## Tech Stack
 
-**Frontend**:
-- React 18 + Vite
-- Tailwind CSS v3
-- Framer Motion (animations)
-- React Router DOM
-- Zustand (state management)
-- TanStack Query (data fetching)
+| Layer | Technology |
+|---|---|
+| LLM | OpenAI GPT-4o |
+| Orchestration | LangGraph StateGraph, LangChain, LangSmith (EU) |
+| Backend | FastAPI, SQLAlchemy 2.0 (async), Pydantic v2 |
+| Data/Stats | NumPy, SciPy (Pearson r, p-values), Pandas |
+| Database | PostgreSQL 18 |
+| Safety | OutputGuardrail (regex + pattern matching + confidence bounding) |
+| Reporting | ReportLab (PDF), Jinja2 (HTML) |
+| Frontend | React 19, Vite, Tailwind CSS (dark mode), Framer Motion |
 
-**Backend**:
-- FastAPI (Python)
-- SQLAlchemy + asyncpg
-- LangChain (multi-agent orchestration)
-- LangSmith (trace tracking)
-- Ollama Cloud (LLM: qwen3.5:397b)
-- ReportLab (PDF generation)
-- Jinja2 (HTML templates)
-
-**Database**:
-- PostgreSQL 18 (time-series data)
+---
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.10+ with uv
-- Node.js 18+ and npm
+- Python 3.11+
+- Node.js 18+
 - PostgreSQL 18+
 
-### 1. Clone Repository
+### 1. Clone & Setup
 
 ```bash
-cd D:\Projects\AVP\pharma-data-integrity-inspector
+git clone https://github.com/YOUR_USERNAME/pharma-data-integrity-inspector.git
+cd pharma-data-integrity-inspector
 ```
 
-### 2. Setup Database
+### 2. Database
 
 ```bash
-# PostgreSQL is already running with pharma_data database
-# Tags are seeded (20 pharma process tags)
+# Create PostgreSQL database
+psql -U postgres -c "CREATE USER pharma_user WITH PASSWORD 'pharma_pass';"
+psql -U postgres -c "CREATE DATABASE pharma_data OWNER pharma_user;"
+
+# Create schema
+psql -U pharma_user -d pharma_data -f scripts/create_schema.sql
+
+# Seed tag metadata
+psql -U pharma_user -d pharma_data -f scripts/seed_tags.sql
 ```
 
-### 3. Install Backend Dependencies
+### 3. Backend
 
 ```bash
 cd backend
-uv venv
-uv pip install -r requirements.txt
-```
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# macOS/Linux:
+source .venv/bin/activate
 
-### 4. Configure Environment
+pip install -r requirements.txt
 
-```bash
-# Edit backend/.env with your API keys
-# - LangSmith API key (optional for tracing)
-# - Ollama Cloud API key (or use local Ollama)
-```
+# Copy and edit .env with your keys
+cp .env.example .env
+# Set OPENAI_API_KEY (required)
+# Set LANGSMITH_API_KEY (optional, for tracing)
 
-### 5. Start Backend
+# Seed 24h of historical data
+python seed_historical_data.py
 
-```bash
-cd backend
-uv run python main.py
+# Start server
+python main.py
 # Runs on http://localhost:8000
 ```
 
-### 6. Start Frontend
+### 4. Frontend
 
 ```bash
 cd frontend
+npm install
 npm run dev
 # Runs on http://localhost:5173
 ```
 
-### 7. Open Browser
+### 5. Or use the start script
 
+```bash
+# Windows — starts both servers
+start-servers.bat
 ```
-http://localhost:5173
-```
 
-## Anomaly Detection Algorithms (10 Checks)
+Open http://localhost:5173 and click **Start Analysis**.
 
-### Universal Checks (7)
-1. **Sensor Drift** - Rolling mean comparison (1h vs 6h window)
-2. **Stuck Value (Flatline)** - <3 unique values in 1 hour
-3. **Impossible Readings** - Outside physical limits
-4. **Correlation Breakdown** - Pearson r < 0.7 for related tags
-5. **Quality Code Mismatch** - 'Good' code but statistical outliers
-6. **Rate-of-Change Violation** - dT/dt > threshold
-7. **Data Gaps** - Gap > 2x scan rate (10 sec)
+---
 
-### Pharma-Specific Checks (3)
-8. **FDA 21 CFR Part 11 Audit Trail** - Unlogged changes
-9. **Batch Consistency** - >5% deviation from historical batches
-10. **CIP Cycle Anomaly** - T < 70°C or flow < 500 L/min during CIP
+## 11 Integrity Checks
 
-## Multi-Agent Architecture
+| # | Check | What It Catches | Method |
+|---|---|---|---|
+| 1 | Sensor Drift | Gradual calibration degradation | Rolling mean comparison (1h vs 6h) |
+| 2 | Stuck Value | Transmitter stopped updating | <3 unique values in sliding window |
+| 3 | Impossible Readings | Outside physical possibility | Per-datatype limits (e.g., T < -273°C) |
+| 4 | Quality Code Mismatch | SCADA says Good but data is outlier | IQR outlier % vs Good quality % |
+| 5 | Rate-of-Change | Impossible step changes | Delta between consecutive 5-sec readings |
+| 6 | Data Gaps | Missing historian data | Time gap > 2× scan rate |
+| 7 | Statistical Outliers | Extreme value deviations | Z-score > 5, >5% of readings |
+| 8 | Correlation Breakdown | Related tags stopped correlating | Split-half Pearson r shift > 0.6 |
+| 9 | CIP Temperature Low | Incomplete cleaning cycle | CIP supply temp < 70°C |
+| 10 | FDA Audit Trail | 21 CFR Part 11 concern | >50% non-Good quality codes |
+| **11** | **Cross-Sensor Corroboration** | **Sensor PLAUSIBLE but WRONG** | **Segmented correlation + trend direction** |
 
-### Agent 1: Data Profiler
-Analyzes 24h of tag data, builds baseline statistics (min, max, mean, std, update frequency)
+---
 
-### Agent 2: Anomaly Detector
-Applies 10 detection algorithms, flags suspicious tags with confidence scores
+## Demo Anomalies
 
-### Agent 3: Hypothesis Generator
-Generates root cause hypotheses for user-selected anomalies with pharma context
+The TagSimulator injects 3 reproducible anomalies:
 
-### Agent 4: Report Generator
-Creates three output formats:
-- **PDF**: Executive summary (1-page overview)
-- **HTML**: Detailed technical report
-- **JSON**: Raw data export for engineers
+| Tag | Type | Description |
+|---|---|---|
+| TI-101 | Sensor Drift | +2.5°C/hr drift starting at hour 10 |
+| VI-301 | Stuck Value | Frozen at 4.2 mm/s for 6 hours |
+| TI-101 | Cross-Sensor Inconsistency | 3°C offset (172 vs 175°C) hours 10-14, Good quality code |
 
-## Injected Demo Anomalies
-
-This simulation includes 2 pre-injected anomalies for reproducible demos:
-
-| Tag | Type | Start Time | Duration | Description |
-|-----|------|------------|----------|-------------|
-| TI-101 | Sensor Drift | 14:32:00 | 18 hours | +2.5°C/hour drift |
-| VI-301 | Stuck Value | 03:15:00 | 6 hours | Frozen at 4.2 mm/s |
-
-## On-Premise Deployment
-
-This system is designed for air-gapped industrial environments:
-
-1. **Local LLM**: Replace Ollama Cloud with local Ollama instance
-   ```bash
-   ollama pull qwen3.5:397b
-   # Update OLLAMA_BASE_URL to http://localhost:11434/v1
-   ```
-
-2. **Local Database**: PostgreSQL runs on-premise (no cloud dependency)
-
-3. **Local Frontend**: Serve React app from internal web server
-
-4. **No External API Calls**: All processing happens locally
-
-5. **Compliance**: Architecture supports FDA 21 CFR Part 11 requirements
+---
 
 ## API Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Health check |
-| GET | `/tags` | Get all tag metadata |
-| GET | `/tags/{id}/readings` | Get tag readings |
-| GET | `/tags/streaming` | Get latest readings (dashboard) |
-| GET | `/anomalies` | Get detected anomalies |
-| POST | `/anomalies/select` | Update HITL status |
-| POST | `/analyze` | Run multi-agent analysis |
-| POST | `/generate-hypotheses` | Generate root causes |
-| POST | `/generate-reports` | Create PDF/HTML/JSON |
-| GET | `/trace` | Get agent execution trace |
+|---|---|---|
+| GET | `/health` | System status |
+| GET | `/tags/live` | Live tag values (5s refresh) |
+| GET | `/anomalies` | Detected anomalies |
+| POST | `/analyze` | Run Agent 1-2 pipeline |
+| POST | `/anomalies/select` | HITL approve/reject |
+| POST | `/generate-hypotheses` | Agent 3 root causes |
+| POST | `/generate-reports` | Agent 4 reports |
+| GET | `/trace` | Agent execution log |
+| GET | `/stats/correlations` | Live correlation matrix |
+| GET | `/stats/causal-groups` | Causal model definition |
+| GET | `/stats/integrity-checks` | All 11 check metadata |
+| GET | `/stats/tech-stack` | Technology stack details |
+| GET | `/stats/pipeline` | Pipeline architecture info |
 
-## LinkedIn Strategy
+---
 
-### Demo Video Script (2-3 minutes)
+## Deployment
 
-| Time | Visual | Narration |
-|------|--------|-----------|
-| 0:00-0:15 | Dashboard home, 20 tags streaming | "Pharma manufacturing relies on trusted sensor data. But what if your sensors are lying to you?" |
-| 0:15-0:30 | Zoom on TI-101 (reactor temp) | "This reactor temperature sensor has been drifting for 18 hours. Nobody noticed." |
-| 0:30-0:45 | Anomaly detection view | "I built an AI multi-agent system that finds data integrity issues automatically. It found 5 problems in 24 hours." |
-| 0:45-1:00 | HITL view, user selecting | "Here's the key: human in the loop. The AI flags candidates, but the operator decides what to investigate." |
-| 1:00-1:20 | Hypothesis view | "For each selected anomaly, AI generates root cause hypotheses. 'Sensor drift due to coating buildup - recommend calibration.'" |
-| 1:20-1:40 | Report preview | "Three output formats: PDF for executives, HTML for operations, JSON for engineers." |
-| 1:40-2:00 | Trace toggle: Minimal → Full | "Full transparency: toggle between summary view and full agent workflow." |
-| 2:00-2:15 | LangSmith trace screenshot | "LangSmith integration tracks every agent handoff. This is production-grade AI engineering." |
-| 2:15-2:30 | Back to dashboard | "Built with React, PostgreSQL, LangChain multi-agents, and Ollama. Supports on-premise deployment." |
-| 2:30-2:45 | GitHub URL | "Code is on GitHub. If you're hiring for AI + industrial roles, let's talk." |
+### Render (Backend + PostgreSQL)
 
-### Screenshot Checklist
+1. Create a new **Web Service** on Render, connect your GitHub repo
+2. Set root directory to `backend/`
+3. Build command: `pip install -r requirements.txt`
+4. Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+5. Add PostgreSQL addon on Render
+6. Set environment variables: `OPENAI_API_KEY`, `DATABASE_URL`, `LANGSMITH_API_KEY` (optional)
 
-- [ ] Dashboard Home - 20 tags streaming
-- [ ] Anomaly Detection View - List of flagged issues
-- [ ] HITL Selection View - User approving/rejecting
-- [ ] Hypothesis View - Root cause analysis
-- [ ] Report Preview - PDF/HTML/JSON tabs
-- [ ] Trace Toggle (Minimal) - Clean summary
-- [ ] Trace Toggle (Full) - All agent inputs/outputs
-- [ ] LangSmith Trace - External screenshot
-- [ ] Mobile View - Dashboard on iPhone frame
-- [ ] Architecture Diagram - System overview
+### Vercel (Frontend)
+
+1. Create new project on Vercel, connect GitHub repo
+2. Set root directory to `frontend/`
+3. Framework: Vite
+4. Set `VITE_API_BASE` environment variable to your Render backend URL
+5. Update `API_BASE` in each page component to use `import.meta.env.VITE_API_BASE`
+
+---
 
 ## License
 
 MIT
-
----
-
-**Built with ❤️ for pharma data integrity**
