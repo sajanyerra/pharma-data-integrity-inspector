@@ -2,7 +2,7 @@ import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom'
 import { 
   AlertTriangle, FileText, ChevronRight, 
   Database, CheckCircle, Bot, Cpu, BarChart3, ShieldCheck,
-  Eye, EyeOff, Moon, Sun, BookOpen
+  Moon, Sun, BookOpen
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import axios from 'axios'
@@ -27,12 +27,6 @@ const STEPS = [
 function App() {
   const location = useLocation()
   const navigate = useNavigate()
-  const [traceMode, setTraceMode] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('traceMode') || 'full'
-    }
-    return 'full'
-  })
   const [systemStatus, setSystemStatus] = useState('healthy')
   const [anomalyCount, setAnomalyCount] = useState(0)
   const [approvedCount, setApprovedCount] = useState(0)
@@ -47,8 +41,7 @@ function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode)
     localStorage.setItem('darkMode', darkMode)
-    localStorage.setItem('traceMode', traceMode)
-  }, [darkMode, traceMode])
+  }, [darkMode])
 
   useEffect(() => {
     const checkHealth = async () => {
@@ -117,25 +110,6 @@ function App() {
             >
               {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
-
-            <div className="flex items-center gap-0.5 bg-secondary rounded-lg p-0.5">
-              <button
-                onClick={() => setTraceMode('minimal')}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
-                  traceMode === 'minimal' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <EyeOff className="w-3 h-3" />Min
-              </button>
-              <button
-                onClick={() => setTraceMode('full')}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
-                  traceMode === 'full' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <Eye className="w-3 h-3" />Full
-              </button>
-            </div>
 
             <Link
               to="/stats"
@@ -213,7 +187,7 @@ function App() {
           <Route path="/hitl" element={<HITLSelection />} />
           <Route path="/hypotheses" element={<HypothesisView />} />
           <Route path="/reports" element={<ReportPreview />} />
-          <Route path="/trace" element={<TraceView traceMode={traceMode} />} />
+          <Route path="/trace" element={<TraceView />} />
           <Route path="/stats" element={<StatsForNerds />} />
         </Routes>
       </main>

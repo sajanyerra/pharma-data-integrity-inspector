@@ -21,16 +21,26 @@ const AGENT_COLORS = {
 
 const AGENT_DESCRIPTIONS = {
   DataProfiler: { title: 'Agent 1: Data Profiler', what: 'Computes mean, std, quartiles for each sensor tag. AI interprets data quality signals.', why: 'Provides baselines + AI interpretation the Anomaly Detector needs.' },
-  AnomalyDetector: { title: 'Agent 2: Anomaly Detector', what: '10 integrity checks (drift, stuck values, impossible readings, rate-of-change, gaps, outliers, CIP, FDA). AI analyzes the pattern of findings.', why: 'Identifies sensors with data integrity problems + AI explains systemic risk.' },
+  AnomalyDetector: { title: 'Agent 2: Anomaly Detector', what: '11 integrity checks (including Cross-Sensor Corroboration), then AI prioritizes findings by pharma risk.', why: 'Identifies sensors with data integrity problems + AI explains systemic risk.' },
   HypothesisGenerator: { title: 'Agent 3: Hypothesis Generator', what: 'AI proposes root causes with pharma domain knowledge and confidence scores.', why: 'Explains WHY something went wrong, with actionable remediation steps.' },
   ReportGenerator: { title: 'Agent 4: Report Generator', what: 'Compiles findings into PDF, HTML, JSON. AI writes executive narrative.', why: 'Creates audit-ready docs with AI-generated insight for FDA 21 CFR Part 11.' },
 }
 
-export default function TraceView({ traceMode }) {
+export default function TraceView() {
   const [traces, setTraces] = useState([])
   const [loading, setLoading] = useState(true)
   const [expandedTraces, setExpandedTraces] = useState({})
   const [agentFilter, setAgentFilter] = useState('all')
+  const [traceMode, setTraceMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('traceMode') || 'full'
+    }
+    return 'full'
+  })
+
+  useEffect(() => {
+    localStorage.setItem('traceMode', traceMode)
+  }, [traceMode])
 
   useEffect(() => {
     const fetchTraces = async () => {
@@ -74,19 +84,41 @@ export default function TraceView({ traceMode }) {
   const filteredTraces = agentFilter === 'all' ? traces : traces.filter(t => t.agent_name === agentFilter)
   const uniqueAgents = [...new Set(traces.map(t => t.agent_name))]
 
-  if (traceMode === 'minimal') {
-    return (
-      <div className="space-y-5">
+  return (
+    <div className="space-y-5">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Agent Trace</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">Minimal view — toggle Full for I/O details</p>
+          <p className="text-muted-foreground text-sm mt-0.5">
+            {traceMode === 'minimal' ? 'Minimal view — toggle Full for I/O details' : 'Every agent decision logged — expand for I/O'}
+          </p>
         </div>
-
-        <div className="hint">
-          <Search className="w-3.5 h-3.5" />
-          <span>Every agent logs inputs, outputs, and reasoning — required for FDA 21 CFR Part 11 auditability.</span>
+        <div className="flex items-center gap-0.5 bg-secondary rounded-lg p-0.5">
+          <button
+            onClick={() => setTraceMode('minimal')}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              traceMode === 'minimal' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <EyeOff className="w-3 h-3" />Min
+          </button>
+          <button
+            onClick={() => setTraceMode('full')}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              traceMode === 'full' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Eye className="w-3 h-3" />Full
+          </button>
         </div>
+      </div>
 
+      <div className="hint">
+        <Search className="w-3.5 h-3.5" />
+        <span>Every agent logs inputs, outputs, and reasoning — required for FDA 21 CFR Part 11 auditability.</span>
+      </div>
+
+      {traceMode === 'minimal' ? (
         <div className="card p-5">
           <div className="flex items-center gap-1.5 text-muted-foreground mb-4">
             <EyeOff className="w-4 h-4" />
@@ -113,127 +145,115 @@ export default function TraceView({ traceMode }) {
             })}
           </div>
           <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-            <p className="text-xs text-blue-800 dark:text-blue-300">Switch to <strong>Full Trace</strong> in the header for complete agent I/O.</p>
+            <p className="text-xs text-blue-800 dark:text-blue-300">Switch to <strong>Full Trace</strong> for complete agent I/O details.</p>
           </div>
         </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Agent Trace (Full)</h1>
-        <p className="text-muted-foreground text-sm mt-0.5">Every agent decision logged</p>
-      </div>
-
-      <div className="hint">
-        <Search className="w-3.5 h-3.5" />
-        <span>Full I/O logging for audit — expand any trace to see raw data.</span>
-      </div>
-
-      <div className="card p-3">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          {Object.entries(AGENT_DESCRIPTIONS).map(([name, desc]) => {
-            const Icon = AGENT_ICONS[name]
-            const colorClass = AGENT_COLORS[name]
-            return (
-              <div key={name} className={`flex items-center gap-2 p-2 rounded-lg border ${colorClass}`}>
-                <Icon className="w-4 h-4 shrink-0" />
-                <div><p className="text-xs font-semibold">{desc.title.split(': ')[1]}</p></div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="card p-3"><p className="text-xs text-muted-foreground">Runs</p><p className="text-xl font-bold text-foreground">{traces.length}</p></div>
-        <div className="card p-3"><p className="text-xs text-muted-foreground">Agents</p><p className="text-xl font-bold text-foreground">{uniqueAgents.length}</p></div>
-        <div className="card p-3"><p className="text-xs text-muted-foreground">Latest</p><p className="text-xl font-bold text-foreground">{traces.length > 0 ? `#${traces.length}` : '-'}</p></div>
-        <div className="card p-3"><p className="text-xs text-muted-foreground">LangSmith</p><p className="text-[10px] text-muted-foreground mt-1">Dev-only external trace viewer. Your users see this local trace log above. <a href="https://smith.langchain.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 underline">smith.langchain.com</a> (login required)</p></div>
-      </div>
-
-      <div className="flex gap-1.5 items-center flex-wrap">
-        <Filter className="w-3.5 h-3.5 text-muted-foreground" />
-        <button onClick={() => setAgentFilter('all')} className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${agentFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-secondary text-muted-foreground'}`}>
-          All ({traces.length})
-        </button>
-        {uniqueAgents.map(name => {
-          const count = traces.filter(t => t.agent_name === name).length
-          const desc = AGENT_DESCRIPTIONS[name]
-          return (
-            <button key={name} onClick={() => setAgentFilter(name)} className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${agentFilter === name ? 'bg-blue-600 text-white' : 'bg-secondary text-muted-foreground'}`}>
-              {desc?.title.split(': ')[1]} ({count})
-            </button>
-          )
-        })}
-      </div>
-
-      <div className="card overflow-hidden">
-        <div className="px-5 py-3 border-b border-border bg-secondary">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground">Execution Log</h2>
-            <div className="flex items-center gap-1.5 text-muted-foreground"><Eye className="w-3.5 h-3.5" /><span className="text-xs">Full Detail</span></div>
-          </div>
-        </div>
-
-        {loading ? (
-          <div className="p-6 space-y-3">{Array(3).fill(0).map((_, i) => <div key={i} className="animate-pulse h-14 bg-secondary rounded-lg" />)}</div>
-        ) : filteredTraces.length === 0 ? (
-          <div className="p-10 text-center">
-            <Activity className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-            <h3 className="text-sm font-semibold text-foreground">No traces yet</h3>
-          </div>
-        ) : (
-          <div className="divide-y divide-border">
-            {filteredTraces.map((trace, index) => {
-              const Icon = AGENT_ICONS[trace.agent_name] || Activity
-              const colorClass = AGENT_COLORS[trace.agent_name] || 'bg-gray-100 text-gray-700'
-              const isExpanded = expandedTraces[trace.id]
-              const desc = AGENT_DESCRIPTIONS[trace.agent_name]
-
-              return (
-                <div key={trace.id} className="p-3">
-                  <div onClick={() => toggleExpand(trace.id)} className="flex items-center gap-3 cursor-pointer hover:bg-secondary/50 -mx-3 px-3 py-2 rounded-lg transition-colors">
-                    {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${colorClass}`}><Icon className="w-4 h-4" /></div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-foreground">{desc?.title || trace.agent_name}</span>
-                        <span className="text-[10px] text-muted-foreground">#{traces.length - traces.indexOf(trace)}</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">{getAgentSummary(trace)}</p>
-                    </div>
-                    <span className="text-[10px] text-muted-foreground">{new Date(trace.created_at).toLocaleTimeString()}</span>
+      ) : (
+        <>
+          <div className="card p-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {Object.entries(AGENT_DESCRIPTIONS).map(([name, desc]) => {
+                const Icon = AGENT_ICONS[name]
+                const colorClass = AGENT_COLORS[name]
+                return (
+                  <div key={name} className={`flex items-center gap-2 p-2 rounded-lg border ${colorClass}`}>
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <div><p className="text-xs font-semibold">{desc.title.split(': ')[1]}</p></div>
                   </div>
+                )
+              })}
+            </div>
+          </div>
 
-                  <AnimatePresence>
-                    {isExpanded && (
-                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="mt-3 ml-7 space-y-3">
-                        {desc && (
-                          <div className={`p-2.5 rounded-lg border ${colorClass}`}>
-                            <p className="text-[10px] font-semibold mb-0.5">Why this agent exists:</p>
-                            <p className="text-xs opacity-80">{desc.why}</p>
-                          </div>
-                        )}
-                        <div>
-                          <h4 className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">Input</h4>
-                          <pre className="bg-secondary border border-border rounded-lg p-2.5 text-[10px] text-foreground overflow-x-auto max-h-48 overflow-y-auto">{formatJSON(trace.input)}</pre>
-                        </div>
-                        <div>
-                          <h4 className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">Output</h4>
-                          <pre className="bg-secondary border border-border rounded-lg p-2.5 text-[10px] text-foreground overflow-x-auto max-h-48 overflow-y-auto">{formatJSON(trace.output)}</pre>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="card p-3"><p className="text-xs text-muted-foreground">Runs</p><p className="text-xl font-bold text-foreground">{traces.length}</p></div>
+            <div className="card p-3"><p className="text-xs text-muted-foreground">Agents</p><p className="text-xl font-bold text-foreground">{uniqueAgents.length}</p></div>
+            <div className="card p-3"><p className="text-xs text-muted-foreground">Latest</p><p className="text-xl font-bold text-foreground">{traces.length > 0 ? `#${traces.length}` : '-'}</p></div>
+            <div className="card p-3"><p className="text-xs text-muted-foreground">LangSmith</p><p className="text-[10px] text-muted-foreground mt-1">Dev-only external trace viewer. Your users see this local trace log above. <a href="https://smith.langchain.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 underline">smith.langchain.com</a> (login required)</p></div>
+          </div>
+
+          <div className="flex gap-1.5 items-center flex-wrap">
+            <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+            <button onClick={() => setAgentFilter('all')} className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${agentFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-secondary text-muted-foreground'}`}>
+              All ({traces.length})
+            </button>
+            {uniqueAgents.map(name => {
+              const count = traces.filter(t => t.agent_name === name).length
+              const desc = AGENT_DESCRIPTIONS[name]
+              return (
+                <button key={name} onClick={() => setAgentFilter(name)} className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${agentFilter === name ? 'bg-blue-600 text-white' : 'bg-secondary text-muted-foreground'}`}>
+                  {desc?.title.split(': ')[1]} ({count})
+                </button>
               )
             })}
           </div>
-        )}
-      </div>
+
+          <div className="card overflow-hidden">
+            <div className="px-5 py-3 border-b border-border bg-secondary">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-foreground">Execution Log</h2>
+                <div className="flex items-center gap-1.5 text-muted-foreground"><Eye className="w-3.5 h-3.5" /><span className="text-xs">Full Detail</span></div>
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="p-6 space-y-3">{Array(3).fill(0).map((_, i) => <div key={i} className="animate-pulse h-14 bg-secondary rounded-lg" />)}</div>
+            ) : filteredTraces.length === 0 ? (
+              <div className="p-10 text-center">
+                <Activity className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+                <h3 className="text-sm font-semibold text-foreground">No traces yet</h3>
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {filteredTraces.map((trace, index) => {
+                  const Icon = AGENT_ICONS[trace.agent_name] || Activity
+                  const colorClass = AGENT_COLORS[trace.agent_name] || 'bg-gray-100 text-gray-700'
+                  const isExpanded = expandedTraces[trace.id]
+                  const desc = AGENT_DESCRIPTIONS[trace.agent_name]
+
+                  return (
+                    <div key={trace.id} className="p-3">
+                      <div onClick={() => toggleExpand(trace.id)} className="flex items-center gap-3 cursor-pointer hover:bg-secondary/50 -mx-3 px-3 py-2 rounded-lg transition-colors">
+                        {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${colorClass}`}><Icon className="w-4 h-4" /></div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-foreground">{desc?.title || trace.agent_name}</span>
+                            <span className="text-[10px] text-muted-foreground">#{traces.length - traces.indexOf(trace)}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{getAgentSummary(trace)}</p>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">{new Date(trace.created_at).toLocaleTimeString()}</span>
+                      </div>
+
+                      <AnimatePresence>
+                        {isExpanded && (
+                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="mt-3 ml-7 space-y-3">
+                            {desc && (
+                              <div className={`p-2.5 rounded-lg border ${colorClass}`}>
+                                <p className="text-[10px] font-semibold mb-0.5">Why this agent exists:</p>
+                                <p className="text-xs opacity-80">{desc.why}</p>
+                              </div>
+                            )}
+                            <div>
+                              <h4 className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">Input</h4>
+                              <pre className="bg-secondary border border-border rounded-lg p-2.5 text-[10px] text-foreground overflow-x-auto max-h-48 overflow-y-auto">{formatJSON(trace.input)}</pre>
+                            </div>
+                            <div>
+                              <h4 className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">Output</h4>
+                              <pre className="bg-secondary border border-border rounded-lg p-2.5 text-[10px] text-foreground overflow-x-auto max-h-48 overflow-y-auto">{formatJSON(trace.output)}</pre>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

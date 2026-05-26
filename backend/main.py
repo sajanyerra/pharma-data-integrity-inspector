@@ -766,6 +766,69 @@ async def get_pipeline_info():
     }
 
 
+@app.get("/stats/tech-stack")
+async def get_tech_stack():
+    return [
+        {
+            "category": "LLM & Orchestration",
+            "items": [
+                {"name": "OpenAI GPT-4o", "role": "LLM reasoning engine for all 4 agents", "icon": "Brain"},
+                {"name": "LangChain", "role": "Prompt templates, output parsers, agent tool framework", "icon": "Link2"},
+                {"name": "LangGraph", "role": "StateGraph orchestration — conditional HITL edge between Agent 2 and 3", "icon": "GitBranch"},
+                {"name": "LangSmith", "role": "Trace logging, evaluation, and debug (EU endpoint)", "icon": "Activity"},
+            ]
+        },
+        {
+            "category": "Backend Framework",
+            "items": [
+                {"name": "FastAPI", "role": "Async REST API with Pydantic models", "icon": "Zap"},
+                {"name": "Uvicorn", "role": "ASGI server with hot-reload", "icon": "Server"},
+                {"name": "SQLAlchemy 2.0", "role": "Async PostgreSQL ORM", "icon": "Database"},
+                {"name": "Pydantic v2", "role": "Schema validation and settings management", "icon": "Shield"},
+            ]
+        },
+        {
+            "category": "Data & Math",
+            "items": [
+                {"name": "NumPy", "role": "Array ops, rolling windows, autocorrelation", "icon": "BarChart3"},
+                {"name": "SciPy", "role": "Pearson correlation, p-values, statistical tests", "icon": "TrendingUp"},
+                {"name": "Pandas", "role": "DataFrame operations on sensor data", "icon": "Table"},
+            ]
+        },
+        {
+            "category": "Output Safety",
+            "items": [
+                {"name": "OutputGuardrail", "role": "Custom — PII redaction, pharma-sensitive blocking, confidence bounding", "icon": "Shield"},
+                {"name": "Regex + pattern matching", "role": "SSN/phone/email/IP/batch number detection", "icon": "Search"},
+            ]
+        },
+        {
+            "category": "Reporting",
+            "items": [
+                {"name": "ReportLab", "role": "PDF generation", "icon": "FileText"},
+                {"name": "Jinja2", "role": "HTML report templating", "icon": "Code"},
+            ]
+        },
+        {
+            "category": "Frontend",
+            "items": [
+                {"name": "React 19", "role": "UI framework", "icon": "Component"},
+                {"name": "Vite", "role": "Build tool and dev server", "icon": "Zap"},
+                {"name": "Tailwind CSS", "role": "Utility-first styling with dark mode", "icon": "Palette"},
+                {"name": "Framer Motion", "role": "Animations and transitions", "icon": "Play"},
+                {"name": "Axios", "role": "HTTP client for API calls", "icon": "Globe"},
+            ]
+        },
+        {
+            "category": "Infrastructure",
+            "items": [
+                {"name": "PostgreSQL", "role": "Primary database — readings, anomalies, traces, hypotheses", "icon": "Database"},
+                {"name": "asyncpg", "role": "Async PostgreSQL driver", "icon": "Server"},
+            ]
+        },
+    ]
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(

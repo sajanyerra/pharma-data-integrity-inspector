@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChevronDown, ChevronRight, Brain, Shield, Cpu, Database,
@@ -14,10 +14,133 @@ const SECTION_ICON = {
   correlations: Link2,
   causal: Layers,
   pipeline: Cpu,
+  techstack: Zap,
   silentlie: Eye,
   guardrail: Lock,
   hitl: Unlock,
   faq: BookOpen,
+}
+
+const CELL_COLORS = [
+  { bg: 'bg-blue-900', text: 'text-blue-100' },
+  { bg: 'bg-blue-700', text: 'text-blue-100' },
+  { bg: 'bg-blue-500', text: 'text-white' },
+  { bg: 'bg-blue-300', text: 'text-blue-900' },
+  { bg: 'bg-blue-100', text: 'text-blue-900' },
+  { bg: 'bg-gray-100 dark:bg-gray-800', text: 'text-gray-400' },
+  { bg: 'bg-red-100', text: 'text-red-900' },
+  { bg: 'bg-red-300', text: 'text-red-900' },
+  { bg: 'bg-red-500', text: 'text-white' },
+  { bg: 'bg-red-700', text: 'text-red-100' },
+  { bg: 'bg-red-900', text: 'text-red-100' },
+]
+
+function correlationToColor(r) {
+  if (r === null || r === undefined) return { bg: 'bg-gray-100 dark:bg-gray-800', text: 'text-gray-400 dark:text-gray-500' }
+  const abs = Math.abs(r)
+  if (r >= 0) {
+    if (abs >= 0.9) return { bg: 'bg-blue-800 dark:bg-blue-900', text: 'text-blue-100' }
+    if (abs >= 0.7) return { bg: 'bg-blue-600 dark:bg-blue-700', text: 'text-white' }
+    if (abs >= 0.5) return { bg: 'bg-blue-400 dark:bg-blue-500', text: 'text-white' }
+    if (abs >= 0.3) return { bg: 'bg-blue-200 dark:bg-blue-400/60', text: 'text-blue-900 dark:text-blue-100' }
+    return { bg: 'bg-blue-50 dark:bg-blue-900/30', text: 'text-blue-900 dark:text-blue-200' }
+  } else {
+    const a = Math.abs(r)
+    if (a >= 0.9) return { bg: 'bg-red-800 dark:bg-red-900', text: 'text-red-100' }
+    if (a >= 0.7) return { bg: 'bg-red-600 dark:bg-red-700', text: 'text-white' }
+    if (a >= 0.5) return { bg: 'bg-red-400 dark:bg-red-500', text: 'text-white' }
+    if (a >= 0.3) return { bg: 'bg-red-200 dark:bg-red-400/60', text: 'text-red-900 dark:text-red-100' }
+    return { bg: 'bg-red-50 dark:bg-red-900/30', text: 'text-red-900 dark:text-red-200' }
+  }
+}
+
+function CorrelationMatrix({ correlations }) {
+  const allTags = useMemo(() => {
+    const tagSet = new Set()
+    correlations.forEach(c => { tagSet.add(c.tag_a); tagSet.add(c.tag_b) })
+    return [...tagSet].sort()
+  }, [correlations])
+
+  const matrix = useMemo(() => {
+    const lookup = {}
+    correlations.forEach(c => {
+      lookup[`${c.tag_a}|${c.tag_b}`] = c
+      lookup[`${c.tag_b}|${c.tag_a}`] = c
+    })
+    const m = {}
+    allTags.forEach(a => {
+      m[a] = {}
+      allTags.forEach(b => {
+        if (a === b) { m[a][b] = { correlation: 1.0, p_value: 0, n: 0 } }
+        else { m[a][b] = lookup[`${a}|${b}`] || null }
+      })
+    })
+    return m
+  }, [correlations, allTags])
+
+  const tagShort = (t) => t
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-fit">
+        <div className="flex items-center gap-1 mb-2 justify-end">
+          <span className="text-[10px] text-muted-foreground">Correlation</span>
+          <div className="flex gap-0.5">
+            {[
+              { label: '-1', bg: 'bg-red-700', text: 'text-red-100' },
+              { label: '0', bg: 'bg-gray-200 dark:bg-gray-700', text: 'text-gray-600 dark:text-gray-300' },
+              { label: '+1', bg: 'bg-blue-700', text: 'text-blue-100' },
+            ].map(s => (
+              <div key={s.label} className={`w-6 h-4 ${s.bg} ${s.text} flex items-center justify-center text-[8px] font-bold rounded-sm`}>{s.label}</div>
+            ))}
+          </div>
+        </div>
+        <table className="border-collapse text-[10px]">
+          <thead>
+            <tr>
+              <th className="p-0.5 text-left text-[10px] font-mono text-muted-foreground"></th>
+              {allTags.map(t => (
+                <th key={t} className="p-0.5 text-center font-mono text-muted-foreground whitespace-nowrap" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', height: '60px' }}>
+                  <span className="text-[9px]">{tagShort(t)}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {allTags.map(rowTag => (
+              <tr key={rowTag}>
+                <td className="p-0.5 text-right font-mono text-muted-foreground whitespace-nowrap pr-1">{tagShort(rowTag)}</td>
+                {allTags.map(colTag => {
+                  const cell = matrix[rowTag]?.[colTag]
+                  const r = cell?.correlation
+                  const isDiag = rowTag === colTag
+                  const isData = cell !== null && cell !== undefined
+                  const colors = isDiag ? { bg: 'bg-gray-300 dark:bg-gray-600', text: 'text-gray-700 dark:text-gray-300' } : correlationToColor(r)
+                  return (
+                    <td
+                      key={colTag}
+                      className={`p-0.5 ${colors.bg} ${colors.text} text-center font-mono rounded-sm border border-white dark:border-gray-900`}
+                      title={isData && !isDiag ? `${tagShort(rowTag)} ↔ ${tagShort(colTag)}\nr = ${r !== null ? r.toFixed(4) : 'N/A'}${cell?.p_value !== null && cell?.p_value !== undefined ? `\np = ${cell.p_value < 0.001 ? '<0.001' : cell.p_value.toFixed(4)}` : ''}\nn = ${cell?.n || 'N/A'}` : (isDiag ? 'Diagonal (r=1.0)' : 'No data')}
+                    >
+                      <div className="w-8 h-6 flex items-center justify-center text-[10px] font-semibold">
+                        {isDiag ? '—' : (r !== null && r !== undefined ? r.toFixed(2) : '·')}
+                      </div>
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="flex items-center gap-3 mt-3 text-[10px] text-muted-foreground">
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-600 dark:bg-blue-700 inline-block" /> Strong positive (r &gt; 0.7)</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-600 dark:bg-red-700 inline-block" /> Strong negative (r &lt; -0.7)</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-gray-200 dark:bg-gray-700 inline-block" /> No data</span>
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-2">Pearson r computed from last 24h of stored tag_readings (LIMIT 2000 per pair). Hover cells for p-value and sample size.</p>
+      </div>
+    </div>
+  )
 }
 
 export default function StatsForNerds() {
@@ -25,22 +148,25 @@ export default function StatsForNerds() {
   const [correlations, setCorrelations] = useState([])
   const [causalGroups, setCausalGroups] = useState(null)
   const [pipeline, setPipeline] = useState(null)
+  const [techStack, setTechStack] = useState([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState({})
 
   useEffect(() => {
     const fetch = async () => {
       try {
-        const [checksRes, corrRes, causalRes, pipelineRes] = await Promise.all([
+        const [checksRes, corrRes, causalRes, pipelineRes, techRes] = await Promise.all([
           axios.get(`${API_BASE}/stats/integrity-checks`),
           axios.get(`${API_BASE}/stats/correlations`),
           axios.get(`${API_BASE}/stats/causal-groups`),
           axios.get(`${API_BASE}/stats/pipeline`),
+          axios.get(`${API_BASE}/stats/tech-stack`),
         ])
         setChecks(checksRes.data)
         setCorrelations(corrRes.data)
         setCausalGroups(causalRes.data)
         setPipeline(pipelineRes.data)
+        setTechStack(techRes.data)
       } catch {}
       setLoading(false)
     }
@@ -48,20 +174,6 @@ export default function StatsForNerds() {
   }, [])
 
   const toggle = (key) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }))
-
-  const corrColor = (c) => {
-    if (c === null) return 'text-muted-foreground'
-    if (Math.abs(c) > 0.7) return 'text-green-600 dark:text-green-400'
-    if (Math.abs(c) > 0.4) return 'text-yellow-600 dark:text-yellow-400'
-    return 'text-red-600 dark:text-red-400'
-  }
-
-  const corrBg = (c) => {
-    if (c === null) return 'bg-secondary'
-    if (Math.abs(c) > 0.7) return 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-    if (Math.abs(c) > 0.4) return 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
-    return 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
-  }
 
   if (loading) {
     return (
@@ -120,16 +232,16 @@ export default function StatsForNerds() {
             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
               <div className="px-5 pb-4 space-y-2">
           {checks.map(c => (
-              <div key={c.id} className={`p-3 rounded-lg border ${c.is_novel ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' : 'border-border bg-secondary'}`}>
+              <div key={c.id} className={`p-3 rounded-lg border ${c.is_novel ? 'border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/10' : 'border-border bg-secondary'}`}>
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10px] font-bold text-muted-foreground w-5">#{c.id}</span>
                   <span className="text-xs font-semibold text-foreground">{c.name}</span>
-                  {c.is_novel && <span className="text-[9px] font-bold uppercase tracking-wider bg-amber-200 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 px-1 py-0.5 rounded">Novel</span>}
+                  {c.is_novel && <span className="text-[9px] font-bold uppercase tracking-wider bg-indigo-200 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300 px-1 py-0.5 rounded">Novel</span>}
                 </div>
                 <p className="text-[11px] text-muted-foreground mb-0.5"><strong className="text-foreground">Detects:</strong> {c.detects}</p>
                 <p className="text-[11px] text-muted-foreground mb-0.5"><strong className="text-foreground">Method:</strong> {c.method}</p>
                 <p className="text-[11px] text-muted-foreground"><strong className="text-foreground">Threshold:</strong> {c.threshold}</p>
-                {c.is_novel && <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1">{c.why_novel}</p>}
+                {c.is_novel && <p className="text-[11px] text-indigo-700 dark:text-indigo-300 mt-1">{c.why_novel}</p>}
               </div>
             ))}
               </div>
@@ -138,7 +250,7 @@ export default function StatsForNerds() {
         </AnimatePresence>
       </div>
 
-      {/* Correlation Matrix */}
+      {/* Correlation Matrix — proper NxN grid */}
       <div className="card overflow-hidden">
         <button onClick={() => toggle('correlations')} className="w-full px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
           <div className="flex items-center gap-2">
@@ -152,23 +264,7 @@ export default function StatsForNerds() {
           {expanded.correlations && (
             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
               <div className="px-5 pb-4">
-                <p className="text-xs text-muted-foreground mb-3">Pearson r computed from last 24h of stored tag_readings. Values near ±1 = strongly correlated, near 0 = no linear relationship.</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {correlations.map((c, i) => (
-                    <div key={i} className={`p-3 rounded-lg border ${corrBg(c.correlation)}`}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-foreground">{c.pair}</span>
-                        <span className={`text-sm font-bold ${corrColor(c.correlation)}`}>
-                          {c.correlation !== null ? c.correlation.toFixed(3) : 'N/A'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                        <span>n={c.n}</span>
-                        {c.p_value !== null && <span>p={c.p_value < 0.001 ? '<0.001' : c.p_value.toFixed(3)}</span>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <CorrelationMatrix correlations={correlations} />
               </div>
             </motion.div>
           )}
@@ -207,10 +303,10 @@ export default function StatsForNerds() {
                     ))}
                   </div>
                 ))}
-                {causalGroups.causal_groups._cross_group && Object.keys(causalGroups.causal_groups._cross_group).length > 0 && (
+                {causalGroups.causal_groups._cross_groups && Object.keys(causalGroups.causal_groups._cross_groups).length > 0 && (
                   <div className="p-3 rounded-lg border border-dashed border-border bg-secondary">
                     <h3 className="text-xs font-bold text-foreground mb-2">Cross-Group Couplings</h3>
-                    {Object.entries(causalGroups.causal_groups._cross_group).map(([key, coupling]) => (
+                    {Object.entries(causalGroups.causal_groups._cross_groups).map(([key, coupling]) => (
                       <div key={key} className="ml-2 mb-1.5 flex items-start gap-2">
                         <span className="text-[10px] font-mono text-muted-foreground">{key}</span>
                         <span className="text-[11px] text-foreground">coeff={coupling.coeff}</span>
@@ -220,6 +316,40 @@ export default function StatsForNerds() {
                     ))}
                   </div>
                 )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Tech Stack */}
+      <div className="card overflow-hidden">
+        <button onClick={() => toggle('techstack')} className="w-full px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            <h2 className="text-sm font-bold text-foreground">Tech Stack</h2>
+            <span className="text-[10px] text-muted-foreground">{techStack.length} categories</span>
+          </div>
+          {expanded.techstack ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+        </button>
+        <AnimatePresence>
+          {expanded.techstack && (
+            <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+              <div className="px-5 pb-4 space-y-4">
+                <p className="text-xs text-muted-foreground">Every technology that makes this work — from LLM orchestration to the output guardrail. No black boxes.</p>
+                {techStack.map((category) => (
+                  <div key={category.category}>
+                    <h3 className="text-xs font-bold text-foreground mb-2">{category.category}</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {category.items.map((item) => (
+                        <div key={item.name} className="p-2.5 rounded-lg border border-border bg-secondary">
+                          <p className="text-xs font-semibold text-foreground">{item.name}</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">{item.role}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </motion.div>
           )}
@@ -263,7 +393,7 @@ export default function StatsForNerds() {
                   </div>
                   <ul className="space-y-0.5">
                     {pipeline.guardrail.checks.map((c, i) => (
-                      <li key={i} className="text-[10px] text-muted-foreground">• {c}</li>
+                      <li key={i} className="text-[10px] text-muted-foreground">&#8226; {c}</li>
                     ))}
                   </ul>
                   <p className="text-[10px] text-muted-foreground mt-1">Applied to: {pipeline.guardrail.applied_to.join(', ')}</p>
@@ -302,11 +432,11 @@ export default function StatsForNerds() {
                   { q: "How is this different from Seeq?", a: "Seeq assumes your data is trustworthy and analyzes the process. We question whether the data is trustworthy in the first place. Seeq tells you 'reactor temp is trending up.' We tell you 'the temp sensor is lying — don't trust that Seeq alert.'" },
                   { q: "How is this different from AVEVA PI quality codes?", a: "PI quality codes are per-sensor, per-reading. They flag broken communication, out-of-range, etc. They cannot detect a sensor that's wrong-but-plausible (within range, Good quality code, but contradicted by other sensors). That's what Cross-Sensor Corroboration catches." },
                   { q: "What's cross-sensor corroboration?", a: "A sensor reading that is within normal range, has Good quality code, passes all threshold checks — but is wrong. The sensor is miscalibrated by a few degrees. No individual check catches it. Only cross-referencing correlated sensors catches it." },
-                  { q: "Why is HITL (Human-in-the-Loop) important?", a: "AI can hallucinate or over-flag. Before AI generates root causes and remediation steps, a human reviews the anomalies and approves or rejects them. This prevents AI from recommending actions based on false alarms — critical in pharma where wrong actions have real consequences." },
+                  { q: "Why is HITL (Human-in-the-Loop) important?", a: "AI can hallucinate or over-flag. Before AI generates root causes and remediation steps, a human reviews and approves or rejects them. This prevents AI from recommending actions based on false alarms — critical in pharma where wrong actions have real consequences." },
                   { q: "What is the Output Guardrail?", a: "A safety layer that scrubs AI outputs for PII (SSN, email, phone), pharma-sensitive data (batch numbers, patient references), credentials, and dangerous recommendations (e.g., 'bypass audit trail'). It runs before any AI output reaches the user." },
                   { q: "Is this FDA 21 CFR Part 11 compliant?", a: "This is a prototype. But the architecture is designed for it: complete audit trail (every agent decision logged), HITL gate, output guardrails, and traceability from finding to recommendation. A production system would add electronic signatures and validation protocols." },
                   { q: "Can I use this with real AVEVA PI data?", a: "The architecture is historian-agnostic. In production, TagSimulator would be replaced by a PI API connector (PI Web API or PI SDK). The TagSimulator exists because we can't ship real plant data with a demo." },
-                  { q: "What does the correlation matrix show?", a: "Pearson r values computed from the last 24h of stored sensor data. Strong correlation (|r| > 0.7) means two tags move together — as expected for physically coupled sensors. A sudden drop in correlation is evidence of a sensor fault or a corroboration failure." },
+                  { q: "What does the correlation matrix show?", a: "Pearson r values for all correlated tag pairs, computed from the last 24h of data. Blue cells = positive correlation (tags move together), red cells = negative correlation (tags move in opposite directions). Strong correlation (|r| > 0.7) is expected for physically coupled sensors. A sudden drop is evidence of a sensor fault." },
                   { q: "Is the TagSimulator realistic?", a: "It models 5 equipment units with physics-based causal couplings: temperature affects pressure (Clausius-Clapeyron), flow affects level (mass balance), pump pressure relates to flow (pump curve). Readings have autocorrelation (AR(1)), Gaussian noise, and diurnal variation. It's not a full process simulator, but it's realistic enough to demonstrate cross-sensor reasoning." },
                 ].map((item, i) => (
                   <div key={i} className="p-3 rounded-lg border border-border">
