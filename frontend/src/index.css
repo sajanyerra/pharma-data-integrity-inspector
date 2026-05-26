@@ -1,0 +1,136 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 30 20% 98%;
+  --foreground: 220 20% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 20% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 20% 10%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 220 20% 10%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 10% 46%;
+  --accent: 220 14% 96%;
+  --accent-foreground: 220 20% 10%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 221 83% 53%;
+  --radius: 0.625rem;
+}
+
+.dark {
+  --background: 224 30% 10%;
+  --foreground: 210 40% 96%;
+  --card: 224 26% 14%;
+  --card-foreground: 210 40% 96%;
+  --popover: 224 26% 14%;
+  --popover-foreground: 210 40% 96%;
+  --primary: 217 91% 60%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 224 20% 18%;
+  --secondary-foreground: 210 40% 96%;
+  --muted: 224 20% 18%;
+  --muted-foreground: 215 20% 55%;
+  --accent: 224 20% 18%;
+  --accent-foreground: 210 40% 96%;
+  --destructive: 0 62% 50%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 224 20% 20%;
+  --input: 224 20% 20%;
+  --ring: 217 91% 60%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-card text-card-foreground rounded-xl border shadow-sm transition-colors duration-300;
+  }
+
+  .btn-primary {
+    @apply bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2.5 rounded-lg font-semibold transition-all shadow-sm hover:shadow-md active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply bg-secondary text-secondary-foreground hover:bg-secondary/80 px-4 py-2.5 rounded-lg font-medium transition-colors;
+  }
+
+  .btn-approve {
+    @apply bg-emerald-50 text-emerald-700 border-2 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800 px-5 py-2.5 rounded-lg font-semibold transition-all active:scale-[0.97];
+  }
+
+  .btn-approve-active {
+    @apply bg-emerald-600 text-white border-2 border-emerald-600 shadow-md shadow-emerald-200 dark:shadow-emerald-900/30 px-5 py-2.5 rounded-lg font-semibold transition-all active:scale-[0.97];
+  }
+
+  .btn-reject {
+    @apply bg-red-50 text-red-600 border-2 border-red-200 hover:bg-red-100 hover:border-red-300 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800 px-5 py-2.5 rounded-lg font-semibold transition-all active:scale-[0.97];
+  }
+
+  .btn-reject-active {
+    @apply bg-red-600 text-white border-2 border-red-600 shadow-md shadow-red-200 dark:shadow-red-900/30 px-5 py-2.5 rounded-lg font-semibold transition-all active:scale-[0.97];
+  }
+
+  .hint {
+    @apply text-muted-foreground text-xs flex items-center gap-1.5 mb-4;
+  }
+
+  .hint-expandable summary {
+    @apply cursor-pointer hover:text-foreground transition-colors;
+  }
+
+  .next-step {
+    @apply card p-5 mt-8 flex items-center justify-between;
+  }
+
+  .next-step-btn {
+    @apply btn-primary flex items-center gap-2;
+  }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+  70% { transform: scale(1); box-shadow: 0 0 0 12px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2s infinite;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out forwards;
+}
