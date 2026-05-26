@@ -3,7 +3,7 @@ import { Activity, AlertTriangle, Thermometer, Gauge, Droplet, Waves, ArrowRight
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 
-const API_BASE = 'http://localhost:8000'
+import API_BASE from '../api'
 
 const TAG_ICONS = {
   Temperature: Thermometer,

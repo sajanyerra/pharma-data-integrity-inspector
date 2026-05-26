@@ -4,7 +4,7 @@ import { CheckCircle, XCircle, Send, ArrowRight, Cpu, ChevronDown, Loader2 } fro
 import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
 
-const API_BASE = 'http://localhost:8000'
+import API_BASE from '../api'
 
 const HUMAN_REASONS = {
   sensor_drift: 'Value is slowly drifting away from its normal range, suggesting calibration degradation.',

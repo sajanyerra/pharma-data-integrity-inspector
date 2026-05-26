@@ -4,7 +4,7 @@ import { Lightbulb, Target, ClipboardList, AlertTriangle, CheckCircle, FileText,
 import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
 
-const API_BASE = 'http://localhost:8000'
+import API_BASE from '../api'
 
 export default function HypothesisView() {
   const [hypotheses, setHypotheses] = useState([])

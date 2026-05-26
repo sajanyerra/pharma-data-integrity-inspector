@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import axios from 'axios'
 
-const API_BASE = 'http://localhost:8000'
+import API_BASE from '../api'
 
 const SECTION_ICON = {
   checks: Shield,

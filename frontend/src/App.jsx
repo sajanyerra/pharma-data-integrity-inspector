@@ -14,7 +14,7 @@ import ReportPreview from './pages/ReportPreview'
 import TraceView from './pages/TraceView'
 import StatsForNerds from './pages/StatsForNerds'
 
-const API_BASE = 'http://localhost:8000'
+import API_BASE from './api'
 
 const STEPS = [
   { path: '/', label: 'Profile', icon: BarChart3 },

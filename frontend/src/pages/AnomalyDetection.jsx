@@ -4,7 +4,7 @@ import { AlertTriangle, AlertCircle, AlertOctagon, CheckCircle, ChevronRight, Fi
 import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
 
-const API_BASE = 'http://localhost:8000'
+import API_BASE from '../api'
 
 const SEVERITY_CONFIG = {
   critical: { icon: AlertOctagon, color: 'bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800', label: 'CRITICAL' },

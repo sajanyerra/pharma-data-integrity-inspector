@@ -4,7 +4,7 @@ import { FileText, Download, FileJson, FileCode, Eye, CheckCircle, Bot, Home } f
 import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
 
-const API_BASE = 'http://localhost:8000'
+import API_BASE from '../api'
 
 export default function ReportPreview() {
   const [generating, setGenerating] = useState(false)

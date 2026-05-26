@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Eye, EyeOff, ChevronDown, ChevronRight, Activity, Database, Brain, FileText, Search, Filter } from 'lucide-react'
 import axios from 'axios'
 
-const API_BASE = 'http://localhost:8000'
+import API_BASE from '../api'
 
 const AGENT_ICONS = {
   DataProfiler: Database,

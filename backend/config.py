@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "https://ollama.cloud/v1"
     OLLAMA_MODEL: str = "qwen3.5:397b"
     OPENAI_API_KEY: str = ""
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    HOST: str = os.environ.get("HOST", "0.0.0.0")
+    PORT: int = int(os.environ.get("PORT", "8000"))
 
     class Config:
         env_file = ".env"
