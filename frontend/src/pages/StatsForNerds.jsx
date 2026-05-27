@@ -211,7 +211,7 @@ export default function StatsForNerds() {
           </div>
           {causalGroups?.silent_lie && (
             <div className="text-xs text-muted-foreground">
-              <span className="font-semibold text-foreground">Injected in this demo:</span> {causalGroups.silent_lie.tag_id} miscalibrated by {causalGroups.silent_lie.offset}°C from {String(causalGroups.silent_lie.start_hour).padStart(2, '0')}:{String(causalGroups.silent_lie.start_minute).padStart(2, '0')} for {causalGroups.silent_lie.duration_hours}h. {causalGroups.silent_lie.desc}
+              <span className="font-semibold text-foreground">Injected in this demo:</span> {causalGroups.silent_lie.tag_id} miscalibrated by {causalGroups.silent_lie.offset}°C from {String(causalGroups.silent_lie.start_hour).padStart(2, '0')}:{String(causalGroups.silent_lie.start_minute).padStart(2, '0')} for {Math.round(causalGroups.silent_lie.duration_hours)}h. {causalGroups.silent_lie.desc}
             </div>
           )}
         </div>

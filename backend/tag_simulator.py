@@ -211,6 +211,7 @@ class TagSimulator:
             elif template['type'] == 'spike':
                 anomaly['start_hour'] = start_hour
                 anomaly['start_minute'] = start_minute
+                anomaly['duration_hours'] = 1
                 anomaly['spike_multiplier'] = self.rng.uniform(*template['params']['multiplier_range'])
                 anomaly['spike_points'] = self.rng.randint(*template['params']['duration_points_range'])
 
@@ -270,7 +271,7 @@ class TagSimulator:
             return value, None
 
         anomaly_start = self.start_time.replace(hour=anomaly['start_hour'], minute=anomaly['start_minute'])
-        anomaly_end = anomaly_start + timedelta(hours=anomaly['duration_hours'])
+        anomaly_end = anomaly_start + timedelta(hours=anomaly.get('duration_hours', 1))
 
         if not (anomaly_start <= timestamp <= anomaly_end):
             return value, None

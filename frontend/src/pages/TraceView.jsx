@@ -6,15 +6,13 @@ import axios from 'axios'
 import API_BASE from '../api'
 
 const AGENT_ICONS = {
-  DataProfiler: Database,
-  AnomalyDetector: Brain,
+  DetectionAgent: Database,
   HypothesisGenerator: Activity,
   ReportGenerator: FileText,
 }
 
 const AGENT_COLORS = {
-  DataProfiler: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800',
-  AnomalyDetector: 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800',
+  DetectionAgent: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800',
   HypothesisGenerator: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800',
   ReportGenerator: 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800',
 }
@@ -61,13 +59,10 @@ export default function TraceView() {
 
   const getAgentSummary = (trace) => {
     const out = trace.output || {}
-    if (trace.agent_name === 'DataProfiler') {
-      const count = out.metadata?.tags_analyzed || out.tag_profiles ? Object.keys(out.tag_profiles || {}).length : '?'
-      return `Profiled ${count} tags`
-    }
-    if (trace.agent_name === 'AnomalyDetector') {
+    if (trace.agent_name === 'DetectionAgent') {
+      const count = out.tag_profiles ? Object.keys(out.tag_profiles).length : '?'
       const total = out.summary?.total_anomalies || out.anomalies?.length || 0
-      return `Detected ${total} anomalies`
+      return `Profiled ${count} tags, detected ${total} anomalies`
     }
     if (trace.agent_name === 'HypothesisGenerator') {
       const total = out.summary?.total_hypotheses || out.hypotheses?.length || 0

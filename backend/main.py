@@ -956,7 +956,7 @@ async def get_causal_groups():
 
 @app.get("/stats/integrity-checks")
 async def get_integrity_checks():
-    """Return metadata about all 11 integrity checks"""
+    """Return metadata about all 9 integrity checks"""
     return [
         {
             "id": 1, "name": "Sensor Drift", "method": "Rolling mean comparison (1h vs 6h)",
@@ -964,8 +964,8 @@ async def get_integrity_checks():
             "is_rule_based": True
         },
         {
-            "id": 2, "name": "Stuck Value", "method": "Unique value count in 1h window",
-            "detects": "Transmitter stopped updating", "threshold": "<3 unique values in 720 readings",
+            "id": 2, "name": "Stuck Value", "method": "Unique value count in adaptive window",
+            "detects": "Transmitter stopped updating", "threshold": "<3 unique values in 1h window",
             "is_rule_based": True
         },
         {
@@ -974,42 +974,32 @@ async def get_integrity_checks():
             "is_rule_based": True
         },
         {
-            "id": 4, "name": "Quality Code Mismatch", "method": "IQR outlier check vs quality_code='Good'",
-            "detects": "SCADA reports Good but data is outlier", "threshold": ">5% outliers with >90% Good quality",
+            "id": 4, "name": "Rate-of-Change", "method": "Delta between consecutive readings",
+            "detects": "Physically impossible step changes", "threshold": "Type-specific thresholds (e.g. >50°C/step)",
             "is_rule_based": True
         },
         {
-            "id": 5, "name": "Rate-of-Change", "method": "Delta between consecutive 5-sec readings",
-            "detects": "Physically impossible step changes", "threshold": "e.g. >50°C per 5 sec",
+            "id": 5, "name": "Noise Burst", "method": "Local std deviation ratio vs baseline",
+            "detects": "Electrical interference or signal degradation", "threshold": ">5x baseline std in 30-min window",
             "is_rule_based": True
         },
         {
-            "id": 6, "name": "Data Gaps", "method": "Time gap between consecutive readings",
-            "detects": "Missing data in historian", "threshold": ">10 seconds (2x scan rate)",
+            "id": 6, "name": "Correlation Breakdown", "method": "Pearson correlation shift (1st half vs 2nd half)",
+            "detects": "Tag pairs that stopped correlating mid-period", "threshold": "Shift > 0.8",
             "is_rule_based": True
         },
         {
-            "id": 7, "name": "Statistical Outliers", "method": "Z-score > 5 (extreme outliers only)",
-            "detects": "Extreme value deviations", "threshold": ">5 sigma, >5% of readings",
+            "id": 7, "name": "CIP Temperature Low", "method": "CIP supply temp < sterilization threshold",
+            "detects": "Incomplete cleaning cycle", "threshold": "TI-601 < 70°C for >30 readings",
             "is_rule_based": True
         },
         {
-            "id": 8, "name": "Correlation Breakdown", "method": "Pearson correlation shift (1st half vs 2nd half)",
-            "detects": "Tag pairs that stopped correlating mid-period", "threshold": "Shift > 0.4",
-            "is_rule_based": True
-        },
-        {
-            "id": 9, "name": "CIP Temperature Low", "method": "CIP supply temp < sterilization threshold",
-            "detects": "Incomplete cleaning cycle", "threshold": "TI-601 < 70°C for >10 readings",
-            "is_rule_based": True
-        },
-        {
-            "id": 10, "name": "FDA Audit Trail", "method": "Quality code distribution check",
+            "id": 8, "name": "FDA Audit Trail", "method": "Quality code distribution check",
             "detects": "21 CFR Part 11 compliance concern", "threshold": ">50% non-Good quality codes",
             "is_rule_based": True
         },
         {
-            "id": 11, "name": "Cross-Sensor Corroboration", "method": "Segmented Pearson correlation + trend direction analysis against witness sensors",
+            "id": 9, "name": "Cross-Sensor Corroboration", "method": "Segmented Pearson correlation + trend direction analysis against witness sensors",
             "detects": "Sensor reading is PLAUSIBLE but WRONG — contradicted by correlated sensors",
             "threshold": "Correlation drop > 0.2 with contradicted trend direction",
             "is_rule_based": True,
