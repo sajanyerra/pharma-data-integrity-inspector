@@ -30,6 +30,7 @@ function App() {
   const [systemStatus, setSystemStatus] = useState('healthy')
   const [anomalyCount, setAnomalyCount] = useState(0)
   const [approvedCount, setApprovedCount] = useState(0)
+  const [rejectedCount, setRejectedCount] = useState(0)
   const [hypothesisCount, setHypothesisCount] = useState(0)
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -60,6 +61,7 @@ function App() {
         const all = allAnomalies.data
         setAnomalyCount(all.length)
         setApprovedCount(all.filter(a => a.hitl_status === 'approved').length)
+        setRejectedCount(all.filter(a => a.hitl_status === 'rejected').length)
         setHypothesisCount(all.filter(a => a.hypothesis).length)
       } catch {}
     }
@@ -77,9 +79,9 @@ function App() {
   const getStepState = (i) => {
     if (i === 0) return anomalyCount > 0 ? 'done' : 'available'
     if (i === 1) return anomalyCount > 0 ? 'done' : 'locked'
-    if (i === 2) return anomalyCount > 0 ? 'available' : 'locked'
-    if (i === 3) return anomalyCount > 0 ? 'available' : 'locked'
-    if (i === 4) return anomalyCount > 0 ? 'available' : 'locked'
+    if (i === 2) return approvedCount > 0 || (anomalyCount > 0 && anomalyCount === rejectedCount) ? 'done' : anomalyCount > 0 ? 'available' : 'locked'
+    if (i === 3) return hypothesisCount > 0 ? 'done' : (approvedCount > 0 || (anomalyCount > 0 && anomalyCount === rejectedCount)) ? 'available' : 'locked'
+    if (i === 4) return hypothesisCount > 0 ? 'available' : 'locked'
     return 'locked'
   }
 
