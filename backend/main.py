@@ -70,10 +70,15 @@ _analysis_jobs = {}
 
 
 async def _seed_background():
-    """Background task: seed 24h of historical data if tag_readings is empty"""
+    """Background task: clear old anomalies, then seed 24h of historical data if tag_readings is empty"""
     await asyncio.sleep(3)
     from sqlalchemy import text, select, func
     try:
+        async with async_session_maker() as session:
+            await session.execute(text("DELETE FROM anomalies"))
+            await session.execute(text("DELETE FROM agent_trace"))
+            await session.commit()
+            print("[OK] Cleared old anomalies and traces")
         async with async_session_maker() as session:
             result = await session.execute(select(func.count()).select_from(TagReading))
             count = result.scalar()
@@ -617,7 +622,7 @@ async def run_analysis_sync(request: RunAnalysisRequest):
             "status": "success",
             "anomalies_detected": len(anomalies),
             "anomalies": [
-                {"tag_id": a.get("tag_id"), "anomaly_type": a.get("anomaly_type"), "confidence": float(a.get("confidence", 0))}
+                {"tag_id": a.get("tag_id"), "anomaly_type": a.get("anomaly_type"), "confidence": float(a.get("confidence", 0)), "evidence_keys": list(a.get("evidence", {}).keys())}
                 for a in anomalies
             ],
             "tag_profiles_count": len(profiles),
@@ -665,7 +670,22 @@ async def generate_hypotheses():
                     anomalies.append(row_dict)
                 
                 if not anomalies:
-                    _analysis_jobs[job_id] = {"status": "completed", "progress": "Done", "result": {"status": "no_anomalies", "hypotheses": []}, "error": None}
+                    result = await session.execute(text("SELECT * FROM anomalies WHERE hitl_status != 'rejected'"))
+                    anomalies = []
+                    for row in result.fetchall():
+                        row_dict = dict(row._mapping)
+                        if isinstance(row_dict.get('evidence'), str):
+                            try:
+                                row_dict['evidence'] = json.loads(row_dict['evidence'])
+                            except:
+                                row_dict['evidence'] = {}
+                        if 'confidence' in row_dict and row_dict['confidence'] is not None:
+                            row_dict['confidence'] = float(row_dict['confidence'])
+                        row_dict.setdefault('severity', 'medium')
+                        anomalies.append(row_dict)
+                
+                if not anomalies:
+                    _analysis_jobs[job_id] = {"status": "completed", "progress": "Done", "result": {"status": "no_anomalies", "hypotheses": [], "message": "All anomalies were rejected. You can still generate a report."}, "error": None}
                     return
                 
                 generator = HypothesisGenerator()
@@ -708,7 +728,6 @@ async def generate_reports():
                     SELECT a.*, t.tag_name
                     FROM anomalies a
                     JOIN tags t ON a.tag_id = t.tag_id
-                    WHERE a.hypothesis IS NOT NULL
                     ORDER BY a.detected_at DESC
                 """))
                 anomalies = [dict(row._mapping) for row in result.fetchall()]
@@ -730,8 +749,7 @@ async def generate_reports():
                             a['severity'] = 'high' if conf > 0.8 else 'medium' if conf > 0.5 else 'low'
                 
                 if not anomalies:
-                    _analysis_jobs[job_id] = {"status": "completed", "progress": "Done", "result": {"status": "no_data", "message": "No anomalies with hypotheses found"}, "error": None}
-                    return
+                    anomalies = []
                 
                 report_gen = ReportGenerator()
                 report_result = await report_gen.execute({
