@@ -63,7 +63,7 @@ export default function Dashboard({ liveTags = [] }) {
         <div className="flex items-start justify-between gap-6">
           <div className="max-w-lg">
             <h1 className="text-2xl font-bold">Pharma Data Integrity Inspector</h1>
-            <p className="text-slate-300 mt-2 text-sm">3 AI agents monitor your pharma sensors — including Cross-Sensor Corroboration that catches sensors no historian can.</p>
+            <p className="text-slate-300 mt-2 text-sm">3 AI agents monitor your pharma sensors with 9 integrity checks — including Cross-Sensor Corroboration that catches sensors other tools miss.</p>
             <div className="flex items-center gap-3 mt-4">
               {nextStep ? (
                 <button onClick={() => navigate(nextStep)} className="flex items-center gap-2 bg-white text-slate-800 px-5 py-2.5 rounded-lg font-semibold hover:bg-slate-100 transition-colors shadow-lg">
@@ -149,7 +149,7 @@ export default function Dashboard({ liveTags = [] }) {
               <span className="text-[9px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300 px-1.5 py-0.5 rounded">Novel</span>
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              A sensor reads 172°C — within normal range, quality code "Good" — passes every threshold check. But its correlated sensors say the real temperature is 175°C. The sensor is wrong by 3°C, and <strong className="text-foreground">no historian in the world would flag it</strong>. Cross-sensor corroboration cross-references physically-coupled sensors to catch what every other tool misses.
+              A sensor reads 172°C — within normal range, quality code "Good" — passes every threshold check. But its correlated sensors say the real temperature is 175°C. The sensor is wrong by 3°C. Cross-sensor corroboration cross-references physically-coupled sensors to catch what threshold checks miss.
             </p>
             <button onClick={() => navigate('/stats')} className="mt-2 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1">
               Read how it works <ChevronRight className="w-3 h-3" />
