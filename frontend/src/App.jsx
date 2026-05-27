@@ -32,6 +32,7 @@ function App() {
   const [approvedCount, setApprovedCount] = useState(0)
   const [rejectedCount, setRejectedCount] = useState(0)
   const [hypothesisCount, setHypothesisCount] = useState(0)
+  const [liveTags, setLiveTags] = useState([])
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('darkMode') === 'true'
@@ -54,22 +55,27 @@ function App() {
 
     const fetchState = async () => {
       try {
-        const [anomaliesRes, allAnomalies] = await Promise.all([
-          axios.get(`${API_BASE}/anomalies`),
-          axios.get(`${API_BASE}/anomalies`)
-        ])
-        const all = allAnomalies.data
-        setAnomalyCount(all.length)
-        setApprovedCount(all.filter(a => a.hitl_status === 'approved').length)
-        setRejectedCount(all.filter(a => a.hitl_status === 'rejected').length)
-        setHypothesisCount(all.filter(a => a.hypothesis).length)
+        const r = await axios.get(`${API_BASE}/anomalies`)
+        setAnomalyCount(r.data.length)
+        setApprovedCount(r.data.filter(a => a.hitl_status === 'approved').length)
+        setRejectedCount(r.data.filter(a => a.hitl_status === 'rejected').length)
+        setHypothesisCount(r.data.filter(a => a.hypothesis).length)
+      } catch {}
+    }
+
+    const fetchTags = async () => {
+      try {
+        const r = await axios.get(`${API_BASE}/tags/live`)
+        setLiveTags(r.data)
       } catch {}
     }
 
     checkHealth()
     fetchState()
-    const interval = setInterval(fetchState, 5000)
-    return () => clearInterval(interval)
+    fetchTags()
+    const i1 = setInterval(fetchState, 5000)
+    const i2 = setInterval(fetchTags, 5000)
+    return () => { clearInterval(i1); clearInterval(i2) }
   }, [])
 
   const currentIndex = STEPS.findIndex(s => s.path === location.pathname)
@@ -184,7 +190,7 @@ function App() {
 
       <main className="flex-1 px-6 py-6 max-w-7xl mx-auto w-full">
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Dashboard liveTags={liveTags} />} />
           <Route path="/anomalies" element={<AnomalyDetection />} />
           <Route path="/hitl" element={<HITLSelection />} />
           <Route path="/hypotheses" element={<HypothesisView />} />

@@ -17,7 +17,6 @@ import uuid
 from database import init_db, get_db, async_session_maker
 from models import Tag, TagReading, Anomaly, AgentTrace
 from config import settings
-from agents.data_profiler import DataProfiler
 from agents.anomaly_detector import AnomalyDetector
 from agents.hypothesis_generator import HypothesisGenerator
 from agents.report_generator import ReportGenerator

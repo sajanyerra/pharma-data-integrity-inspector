@@ -21,9 +21,7 @@ const AGENTS = [
   { num: '4', name: 'Report Generator', icon: FileText, color: 'bg-orange-500', lightColor: 'bg-orange-50 dark:bg-orange-900/20', desc: 'Packages findings into PDF, HTML, JSON, with AI-written executive narrative.' },
 ]
 
-export default function Dashboard() {
-  const [tags, setTags] = useState([])
-  const [loading, setLoading] = useState(true)
+export default function Dashboard({ liveTags = [] }) {
   const [selectedUnit, setSelectedUnit] = useState('all')
   const [anomalyCount, setAnomalyCount] = useState(0)
   const [approvedCount, setApprovedCount] = useState(0)
@@ -31,14 +29,6 @@ export default function Dashboard() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    const fetchLiveTags = async () => {
-      try {
-        const r = await axios.get(`${API_BASE}/tags/live`)
-        setTags(r.data)
-        setLoading(false)
-      } catch { /* keep existing tags on error */ }
-    }
-
     const fetchState = async () => {
       try {
         const r = await axios.get(`${API_BASE}/anomalies`)
@@ -46,12 +36,9 @@ export default function Dashboard() {
         setApprovedCount(r.data.filter(a => a.hitl_status === 'approved').length)
       } catch {}
     }
-
-    fetchLiveTags()
     fetchState()
-    const i1 = setInterval(fetchLiveTags, 5000)
-    const i2 = setInterval(fetchState, 5000)
-    return () => { clearInterval(i1); clearInterval(i2) }
+    const interval = setInterval(fetchState, 5000)
+    return () => clearInterval(interval)
   }, [])
 
   const handleReset = async () => {
@@ -63,6 +50,7 @@ export default function Dashboard() {
     } catch {} finally { setResetting(false) }
   }
 
+  const tags = liveTags
   const unitTypes = ['all', ...new Set(tags.map(t => (t.unit_type || t.tag_id.split('-')[0])))]
   const filteredTags = selectedUnit === 'all' ? tags : tags.filter(t => (t.unit_type || t.tag_id.split('-')[0]) === selectedUnit)
 
@@ -218,10 +206,11 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-          {loading && tags.length === 0 ? (
-            Array(12).fill(0).map((_, i) => (
-              <div key={i} className="card p-3 animate-pulse"><div className="h-4 bg-secondary rounded w-3/4 mb-2" /><div className="h-6 bg-secondary rounded w-1/2" /></div>
-            ))
+          {filteredTags.length === 0 ? (
+            <div className="col-span-full card p-8 text-center">
+              <Activity className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">Connecting to sensors...</p>
+            </div>
           ) : (
             filteredTags.map((tag) => {
               const Icon = TAG_ICONS[tag.data_type] || Activity

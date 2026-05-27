@@ -1,11 +1,11 @@
 """
 LangGraph Multi-Agent Pipeline for Pharma Data Integrity Inspector
 Orchestrates the 4-agent workflow as a StateGraph with conditional HITL routing.
+Agent 2 (AnomalyDetector) computes profiles inline — no separate profiler pass needed.
 """
 
 from typing import Dict, Any, TypedDict, Annotated
 from langgraph.graph import StateGraph, END
-from agents.data_profiler import DataProfiler
 from agents.anomaly_detector import AnomalyDetector
 from agents.hypothesis_generator import HypothesisGenerator
 from agents.report_generator import ReportGenerator
@@ -23,26 +23,17 @@ class PipelineState(TypedDict, total=False):
     current_step: str
 
 
-async def profile_step(state: PipelineState) -> dict:
-    """Agent 1: Data Profiler"""
-    profiler = DataProfiler()
-    result = await profiler.execute({
-        "hours": state.get("hours", 24),
-        "tag_ids": state.get("tag_ids", None)
-    })
-    return {"tag_profiles": result["tag_profiles"], "current_step": "profiled"}
-
-
 async def detect_step(state: PipelineState) -> dict:
-    """Agent 2: Anomaly Detector"""
+    """Agent 2: Anomaly Detector (computes profiles inline from DB)"""
     detector = AnomalyDetector()
     result = await detector.execute({
-        "tag_profiles": state["tag_profiles"],
-        "hours": state.get("hours", 24)
+        "hours": state.get("hours", 24),
     })
     anomalies = result.get("anomalies", [])
+    tag_profiles = result.get("tag_profiles", {})
     return {
         "anomalies": anomalies,
+        "tag_profiles": tag_profiles,
         "hitl_required": len(anomalies) > 0,
         "current_step": "detected"
     }
@@ -90,14 +81,12 @@ class PharmaPipeline:
     def _build_graph(self) -> StateGraph:
         workflow = StateGraph(PipelineState)
 
-        workflow.add_node("profile", profile_step)
         workflow.add_node("detect", detect_step)
         workflow.add_node("hitl_gate", lambda state: {"current_step": "awaiting_hitl"})
         workflow.add_node("hypothesize", hypothesize_step)
         workflow.add_node("report", report_step)
 
-        workflow.set_entry_point("profile")
-        workflow.add_edge("profile", "detect")
+        workflow.set_entry_point("detect")
         workflow.add_conditional_edges("detect", route_after_detection, {
             "hitl_gate": "hitl_gate",
             "end": END
@@ -109,7 +98,7 @@ class PharmaPipeline:
         return workflow.compile()
 
     async def run(self, initial_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Run the full pipeline. For HITL, this runs profile+detect only.
+        """Run the full pipeline. For HITL, this runs detect only.
         Hypothesize/report run after human approval."""
         state = {
             "hours": initial_input.get("hours", 24),
@@ -123,16 +112,12 @@ class PharmaPipeline:
             "current_step": "init"
         }
 
-        profile_result = await profile_step(state)
-        state.update(profile_result)
-        print(f"[Pipeline] Agent 1 done: {len(state.get('tag_profiles', {}))} profiles")
-
         detect_result = await detect_step(state)
         state.update(detect_result)
         print(f"[Pipeline] Agent 2 done: {len(state.get('anomalies', []))} anomalies")
 
         return {
-            "tag_profiles": state["tag_profiles"],
+            "tag_profiles": state.get("tag_profiles", {}),
             "anomalies": state["anomalies"],
             "hitl_required": state["hitl_required"],
             "current_step": state["current_step"],

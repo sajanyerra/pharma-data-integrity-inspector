@@ -5,6 +5,7 @@ Uses deterministic rules for detection, then LLM to prioritize findings.
 Hard cap: max 4 anomalies, deduplicated by tag_id (keep highest confidence).
 """
 
+import asyncio
 import numpy as np
 from scipy import stats
 from typing import Dict, Any, List
@@ -80,9 +81,13 @@ class AnomalyDetector(BaseAgent):
     # ── main entry ──────────────────────────────────────────────────────
 
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Run all checks. Computes profiles inline from data_cache — no separate profiler needed."""
         await self.connect_db()
+        final = []
+        result = {"anomalies": [], "tag_profiles": {},
+                  "summary": {"total_anomalies": 0, "by_type": {}, "timestamp": datetime.utcnow().isoformat()},
+                  "ai_prioritization": "No anomalies detected."}
         try:
-            tag_profiles = input_data.get("tag_profiles", {})
             hours = input_data.get("hours", 24)
             anomalies: List[Dict] = []
 
@@ -90,8 +95,26 @@ class AnomalyDetector(BaseAgent):
             tag_metadata = {row["tag_id"]: dict(row) for row in tags_result}
             data_cache = await self._load_all_readings(hours)
 
+            # Compute profiles inline — no need for separate DataProfiler pass
+            tag_profiles = {}
+            for tag_id, td in data_cache.items():
+                vals = td["values"]
+                if len(vals) < 10:
+                    continue
+                meta = tag_metadata.get(tag_id, {})
+                quality_codes = {}
+                for qc in td["quality_codes"]:
+                    quality_codes[qc] = quality_codes.get(qc, 0) + 1
+                tag_profiles[tag_id] = {
+                    "count": len(vals), "min": float(np.min(vals)), "max": float(np.max(vals)),
+                    "mean": float(np.mean(vals)), "std": float(np.std(vals)),
+                    "median": float(np.median(vals)), "q1": float(np.percentile(vals, 25)),
+                    "q3": float(np.percentile(vals, 75)), "quality_codes": quality_codes,
+                    "data_type": meta.get("data_type", "Unknown"),
+                }
+
             for tag_id, profile in tag_profiles.items():
-                data_type = tag_metadata.get(tag_id, {}).get("data_type", "Unknown")
+                data_type = profile.get("data_type", "Unknown")
                 td = data_cache.get(tag_id)
                 if not td or len(td["values"]) < 10:
                     continue
@@ -135,14 +158,20 @@ class AnomalyDetector(BaseAgent):
 
             result = {
                 "anomalies": final,
+                "tag_profiles": tag_profiles,
                 "summary": {"total_anomalies": len(final), "by_type": self._count_by_type(final),
                             "timestamp": datetime.utcnow().isoformat()},
             }
-            result["ai_prioritization"] = await self._prioritize(final)
+            # Return fast — LLM prioritization is nice-to-have, not blocking
+            result["ai_prioritization"] = f"{len(final)} anomalies detected. Analyzing patterns..."
             await self.save_trace(input_data, result)
-            return result
         finally:
             await self.disconnect_db()
+
+        # Fire LLM in background AFTER db disconnect (task only needs LLM, not DB)
+        if final:
+            asyncio.ensure_future(self._update_prioritization(final, result))
+        return result
 
     # ── checks ──────────────────────────────────────────────────────────
 
@@ -371,6 +400,14 @@ class AnomalyDetector(BaseAgent):
         return anomalies
 
     # ── helpers ──────────────────────────────────────────────────────────
+
+    async def _update_prioritization(self, anomalies: List[Dict], result: Dict):
+        """Background task: LLM prioritization — non-critical, best-effort update."""
+        try:
+            text = await self._prioritize(anomalies)
+            result["ai_prioritization"] = text
+        except Exception:
+            pass  # non-critical — fallback text already in place
 
     async def _prioritize(self, anomalies: List[Dict]) -> str:
         if not anomalies:
