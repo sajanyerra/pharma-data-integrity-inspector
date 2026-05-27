@@ -1,12 +1,12 @@
 """
-LangGraph Multi-Agent Pipeline for Pharma Data Integrity Inspector
-Orchestrates the 4-agent workflow as a StateGraph with conditional HITL routing.
-Agent 2 (AnomalyDetector) computes profiles inline — no separate profiler pass needed.
+LangGraph Pipeline for Pharma Data Integrity Inspector
+Orchestrates the 3-stage workflow with HITL routing.
+Agent 1 (Detection) is a ReAct agent with tools. Agent 2 (Hypothesis) is a ReAct agent with tools.
 """
 
-from typing import Dict, Any, TypedDict, Annotated
+from typing import Dict, Any, TypedDict, List
 from langgraph.graph import StateGraph, END
-from agents.anomaly_detector import AnomalyDetector
+from agents.detection_agent import DetectionAgent
 from agents.hypothesis_generator import HypothesisGenerator
 from agents.report_generator import ReportGenerator
 
@@ -21,11 +21,12 @@ class PipelineState(TypedDict, total=False):
     reports: Dict[str, Any]
     hitl_required: bool
     current_step: str
+    agent_reasoning: str
 
 
 async def detect_step(state: PipelineState) -> dict:
-    """Agent 2: Anomaly Detector (computes profiles inline from DB)"""
-    detector = AnomalyDetector()
+    """Stage 1: Detection Agent — baseline rules + ReAct investigation"""
+    detector = DetectionAgent()
     result = await detector.execute({
         "hours": state.get("hours", 24),
     })
@@ -35,12 +36,13 @@ async def detect_step(state: PipelineState) -> dict:
         "anomalies": anomalies,
         "tag_profiles": tag_profiles,
         "hitl_required": len(anomalies) > 0,
-        "current_step": "detected"
+        "current_step": "detected",
+        "agent_reasoning": result.get("agent_reasoning", ""),
     }
 
 
 async def hypothesize_step(state: PipelineState) -> dict:
-    """Agent 3: Hypothesis Generator"""
+    """Stage 2: Hypothesis Agent — ReAct investigation + root cause generation"""
     generator = HypothesisGenerator()
     approved = state.get("approved_anomalies", state.get("anomalies", []))
     result = await generator.execute({
@@ -48,12 +50,13 @@ async def hypothesize_step(state: PipelineState) -> dict:
     })
     return {
         "hypotheses": result.get("hypotheses", []),
-        "current_step": "hypothesized"
+        "current_step": "hypothesized",
+        "agent_reasoning": state.get("agent_reasoning", "") + "\n\n" + result.get("agent_reasoning", ""),
     }
 
 
 async def report_step(state: PipelineState) -> dict:
-    """Agent 4: Report Generator"""
+    """Stage 3: Report Generator — templates + LLM narrative"""
     reporter = ReportGenerator()
     result = await reporter.execute({
         "anomalies": state.get("anomalies", []),
@@ -66,14 +69,13 @@ async def report_step(state: PipelineState) -> dict:
 
 
 def route_after_detection(state: PipelineState) -> str:
-    """Conditional edge: if anomalies found, require HITL; otherwise skip to end"""
     if state.get("hitl_required", False):
         return "hitl_gate"
     return "end"
 
 
 class PharmaPipeline:
-    """LangGraph-powered multi-agent pipeline"""
+    """LangGraph-powered pipeline with HITL gate"""
 
     def __init__(self):
         self.graph = self._build_graph()
@@ -98,8 +100,7 @@ class PharmaPipeline:
         return workflow.compile()
 
     async def run(self, initial_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Run the full pipeline. For HITL, this runs detect only.
-        Hypothesize/report run after human approval."""
+        """Run detect only. Hypothesize/report after HITL approval."""
         state = {
             "hours": initial_input.get("hours", 24),
             "tag_ids": initial_input.get("tag_ids", None),
@@ -109,17 +110,19 @@ class PharmaPipeline:
             "hypotheses": [],
             "reports": {},
             "hitl_required": False,
-            "current_step": "init"
+            "current_step": "init",
+            "agent_reasoning": "",
         }
 
         detect_result = await detect_step(state)
         state.update(detect_result)
-        print(f"[Pipeline] Agent 2 done: {len(state.get('anomalies', []))} anomalies")
+        print(f"[Pipeline] Detection Agent done: {len(state.get('anomalies', []))} anomalies")
 
         return {
             "tag_profiles": state.get("tag_profiles", {}),
             "anomalies": state["anomalies"],
             "hitl_required": state["hitl_required"],
             "current_step": state["current_step"],
+            "agent_reasoning": state.get("agent_reasoning", ""),
             "message": f"Pipeline: {len(state['anomalies'])} anomalies detected. Awaiting HITL review."
         }

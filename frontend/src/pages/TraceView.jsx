@@ -20,8 +20,8 @@ const AGENT_COLORS = {
 }
 
 const AGENT_DESCRIPTIONS = {
-  AnomalyDetector: { title: 'Agent 1: Anomaly Detector', what: '1 bulk query → inline profiles → 9 integrity checks (including Cross-Sensor Corroboration) → dedup+cap at 4 → async LLM prioritization.', why: 'Identifies sensors with data integrity problems. Returns in ~5s, LLM interpretation arrives async.' },
-  HypothesisGenerator: { title: 'Agent 2: Hypothesis Generator', what: 'AI proposes root causes with pharma domain knowledge and confidence scores.', why: 'Explains WHY something went wrong, with actionable remediation steps.' },
+  DetectionAgent: { title: 'Agent 1: Detection Agent (ReAct)', what: 'Runs 9 baseline rule checks, then uses tools (get_tag_profile, check_correlation, check_cross_sensor, etc.) to investigate suspicious findings.', why: 'Genuine agent reasoning — decides what to investigate based on initial findings, catches patterns rules alone might miss.' },
+  HypothesisGenerator: { title: 'Agent 2: Hypothesis Agent (ReAct)', what: 'Uses tools (get_tag_details, get_process_context, get_similar_anomalies) to investigate before forming root cause hypotheses.', why: 'Investigates before hypothesizing — gathers evidence about the tag, its process context, and similar anomalies.' },
   ReportGenerator: { title: 'Agent 3: Report Generator', what: 'Compiles findings into PDF, HTML, JSON. AI writes executive narrative.', why: 'Creates audit-ready docs with AI-generated insight for FDA 21 CFR Part 11.' },
 }
 

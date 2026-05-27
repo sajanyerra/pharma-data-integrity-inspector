@@ -15,8 +15,8 @@ const TAG_ICONS = {
 }
 
 const AGENTS = [
-  { num: '1', name: 'Anomaly Detector', icon: AlertTriangle, color: 'bg-violet-500', lightColor: 'bg-violet-50 dark:bg-violet-900/20', desc: 'Loads 24h of sensor data in 1 query, computes inline profiles, runs 9 integrity checks (including Cross-Sensor Corroboration), then AI prioritizes findings. Returns in ~5s.' },
-  { num: '2', name: 'Hypothesis Generator', icon: Cpu, color: 'bg-teal-500', lightColor: 'bg-teal-50 dark:bg-teal-900/20', desc: 'Uses AI to propose root causes with confidence scores and remediation steps. Guardrail blocks PII and pharma-sensitive data.' },
+  { num: '1', name: 'Detection Agent', icon: AlertTriangle, color: 'bg-violet-500', lightColor: 'bg-violet-50 dark:bg-violet-900/20', desc: 'ReAct agent with 5 tools: runs 9 baseline rule checks, then uses tools (profiles, correlations, cross-sensor) to investigate. Decides what to dig deeper into.' },
+  { num: '2', name: 'Hypothesis Agent', icon: Cpu, color: 'bg-teal-500', lightColor: 'bg-teal-50 dark:bg-teal-900/20', desc: 'ReAct agent with 3 tools: investigates tag details, process context, and similar anomalies before forming root cause hypotheses. Guardrail validates output.' },
   { num: '3', name: 'Report Generator', icon: FileText, color: 'bg-orange-500', lightColor: 'bg-orange-50 dark:bg-orange-900/20', desc: 'Packages findings into PDF, HTML, JSON, with AI-written executive narrative. Guardrail checks for dangerous recommendations.' },
 ]
 

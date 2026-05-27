@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { AlertTriangle, AlertCircle, AlertOctagon, CheckCircle, ChevronRight, Filter, RefreshCw, Trash, ArrowRight, ShieldCheck, Check, Info, Eye } from 'lucide-react'
+import { AlertTriangle, AlertCircle, AlertOctagon, CheckCircle, ChevronRight, Filter, RefreshCw, Trash, ArrowRight, ShieldCheck, Check, Info, Eye, Brain } from 'lucide-react'
 import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
 
@@ -46,6 +46,7 @@ export default function AnomalyDetection() {
   const [filter, setFilter] = useState('all')
   const [runningAnalysis, setRunningAnalysis] = useState(false)
   const [showChecks, setShowChecks] = useState(false)
+  const [agentReasoning, setAgentReasoning] = useState('')
   const navigate = useNavigate()
 
   const fetchAnomalies = async () => {
@@ -84,6 +85,9 @@ export default function AnomalyDetection() {
             clearInterval(poll)
             setRunningAnalysis(false)
             await fetchAnomalies()
+            if (result && result.agent_reasoning) {
+              setAgentReasoning(result.agent_reasoning)
+            }
             if (result && result.anomalies_detected === 0) {
               alert('Analysis complete — no anomalies detected.')
             }
@@ -152,6 +156,20 @@ export default function AnomalyDetection() {
           </motion.div>
         )}
       </div>
+
+      {/* Agent Reasoning Panel */}
+      {agentReasoning && (
+        <div className="card p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Brain className="w-4 h-4 text-violet-500" />
+            <span className="text-sm font-semibold text-foreground">Agent Investigation</span>
+            <span className="text-[10px] text-muted-foreground">AI agent used tools to investigate findings</span>
+          </div>
+          <div className="bg-secondary rounded-lg p-3 max-h-48 overflow-y-auto">
+            <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono">{agentReasoning}</pre>
+          </div>
+        </div>
+      )}
 
       {/* Severity Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

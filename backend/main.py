@@ -17,7 +17,7 @@ import uuid
 from database import init_db, get_db, async_session_maker
 from models import Tag, TagReading, Anomaly, AgentTrace
 from config import settings
-from agents.anomaly_detector import AnomalyDetector
+from agents.detection_agent import DetectionAgent
 from agents.hypothesis_generator import HypothesisGenerator
 from agents.report_generator import ReportGenerator
 from agents.pipeline import PharmaPipeline
@@ -492,7 +492,8 @@ async def run_analysis(request: RunAnalysisRequest):
                 "result": {
                     "status": "success",
                     "anomalies_detected": len(result["anomalies"]),
-                    "message": f"LangGraph pipeline: {len(result['anomalies'])} anomalies detected. Review in HITL view."
+                    "agent_reasoning": result.get("agent_reasoning", ""),
+                    "message": f"Pipeline: {len(result['anomalies'])} anomalies detected. Review in HITL view."
                 },
                 "error": None
             }
@@ -1021,12 +1022,12 @@ async def get_pipeline_info():
         "orchestration": "LangGraph StateGraph (v0.2.x) with conditional HITL edge",
         "agents": [
             {
-                "id": 1, "name": "Anomaly Detector", "engine": "SQLAlchemy + numpy + scipy + ChatOpenAI (Groq)",
-                "flow": "1 bulk query → compute inline profiles → 9 integrity checks → dedup+cap at 4 → async LLM prioritization"
+                "id": 1, "name": "Detection Agent (ReAct)", "engine": "Baseline rules + LangGraph ReAct agent with 5 tools + ChatOpenAI (Groq)",
+                "flow": "9 baseline checks → ReAct agent investigates with tools (profiles, correlations, cross-sensor) → LLM analysis"
             },
             {
-                "id": 2, "name": "Hypothesis Generator", "engine": "ChatOpenAI (Groq) + PromptTemplate + OutputGuardrail",
-                "flow": "Approved anomalies → LLM proposes root causes → guardrail redacts PII"
+                "id": 2, "name": "Hypothesis Agent (ReAct)", "engine": "LangGraph ReAct agent with 3 tools + ChatOpenAI (Groq) + OutputGuardrail",
+                "flow": "Approved anomalies → ReAct agent investigates (tag details, process context, similar anomalies) → root cause hypothesis"
             },
             {
                 "id": 3, "name": "Report Generator", "engine": "Jinja2 + ChatOpenAI (Groq) + OutputGuardrail",
