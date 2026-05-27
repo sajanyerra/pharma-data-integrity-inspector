@@ -514,6 +514,14 @@ async def run_analysis_sync(request: RunAnalysisRequest):
             "tag_ids": request.tag_ids
         })
         anomalies = result.get("anomalies", [])
+        profiles = result.get("tag_profiles", {})
+        
+        # Debug: show profile stats for first 3 tags
+        debug_info = {}
+        for tid in list(profiles.keys())[:3]:
+            p = profiles[tid]
+            debug_info[tid] = {"count": p.get("count"), "mean": p.get("mean"), "std": p.get("std")}
+        
         return {
             "status": "success",
             "anomalies_detected": len(anomalies),
@@ -521,7 +529,9 @@ async def run_analysis_sync(request: RunAnalysisRequest):
                 {"tag_id": a.get("tag_id"), "anomaly_type": a.get("anomaly_type"), "confidence": float(a.get("confidence", 0))}
                 for a in anomalies
             ],
-            "tag_profiles_count": len(result.get("tag_profiles", {})),
+            "tag_profiles_count": len(profiles),
+            "debug_profiles": debug_info,
+            "current_step": result.get("current_step"),
         }
     except Exception as e:
         import traceback
