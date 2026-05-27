@@ -206,7 +206,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         deviation = abs(recent_mean - previous_mean) / (abs(previous_mean) + 0.001) * 100
         drift_rate = deviation / 6
         
-        if drift_rate > 3.5:
+        if drift_rate > 0.5:
             return {
                 "tag_id": tag_id,
                 "anomaly_type": "sensor_drift",
@@ -223,12 +223,12 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         return None
     
     def _check_stuck_value(self, tag_id: str, values: np.ndarray, readings: List) -> Dict:
-        """Check 2: Stuck Value - Scan full period with 1h windows"""
+        """Check 2: Stuck Value - Scan with sliding 1h windows"""
         if len(values) < 120:
             return None
         
-        window_size = min(120, len(values) // 4)  # ~1 hour at 30-sec intervals
-        step = window_size
+        window_size = min(120, len(values) // 4)
+        step = max(window_size // 2, 1)
         for start in range(0, len(values) - window_size + 1, step):
             window = values[start:start + window_size]
             unique_values = len(np.unique(window))

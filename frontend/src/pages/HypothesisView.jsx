@@ -10,12 +10,16 @@ export default function HypothesisView() {
   const [hypotheses, setHypotheses] = useState([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
+  const [allRejected, setAllRejected] = useState(false)
   const navigate = useNavigate()
 
   const fetchHypotheses = async () => {
     try {
       const r = await axios.get(`${API_BASE}/anomalies`)
-      const withH = r.data.filter(a => a.hypothesis)
+      const allAnomalies = r.data
+      const approvedOnes = allAnomalies.filter(a => a.hitl_status === 'approved')
+      const rejectedOnes = allAnomalies.filter(a => a.hitl_status === 'rejected')
+      const withH = allAnomalies.filter(a => a.hypothesis)
       if (withH.length > 0) {
         setHypotheses(withH.map(a => ({
           anomaly_id: a.id,
@@ -27,6 +31,8 @@ export default function HypothesisView() {
           alternative_causes: [],
           pharma_impact: '',
         })))
+      } else if (approvedOnes.length === 0 && rejectedOnes.length > 0) {
+        setAllRejected(true)
       }
       setLoading(false)
     } catch { setLoading(false) }
@@ -71,6 +77,21 @@ export default function HypothesisView() {
   }
 
   if (hypotheses.length === 0) {
+    if (allRejected) {
+      return (
+        <div className="space-y-5">
+          <h1 className="text-2xl font-bold text-foreground">Root Cause Hypotheses</h1>
+          <div className="card p-10 text-center">
+            <Shield className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-base font-semibold text-foreground">All anomalies rejected</h3>
+            <p className="text-sm text-muted-foreground mt-1">No approved anomalies to hypothesize about. You can still generate a clean report.</p>
+            <button onClick={() => navigate('/reports')} className="btn-primary mt-4">
+              Continue to Report
+            </button>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="space-y-5">
         <h1 className="text-2xl font-bold text-foreground">Root Cause Hypotheses</h1>

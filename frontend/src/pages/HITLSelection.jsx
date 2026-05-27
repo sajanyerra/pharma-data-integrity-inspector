@@ -71,6 +71,8 @@ export default function HITLSelection() {
       if (approvedCount > 0) {
         await axios.post(`${API_BASE}/generate-hypotheses`)
         navigate('/hypotheses')
+      } else {
+        navigate('/hypotheses')
       }
     } catch {} finally { setProcessing(false) }
   }
@@ -201,7 +203,7 @@ export default function HITLSelection() {
                     className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-emerald-700 transition-all shadow-md active:scale-[0.97] disabled:opacity-50"
                   >
                     {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cpu className="w-4 h-4" />}
-                    {processing ? 'Generating hypotheses...' : `Submit & Generate ${approvedCount} Hypothes${approvedCount !== 1 ? 'es' : 'is'}`}
+                    {processing ? (approvedCount > 0 ? 'Generating hypotheses...' : 'Submitting...') : (approvedCount > 0 ? `Submit & Generate ${approvedCount} Hypothes${approvedCount !== 1 ? 'es' : 'is'}` : 'Submit & Continue')}
                     {!processing && <ArrowRight className="w-4 h-4" />}
                   </button>
                 ) : (
