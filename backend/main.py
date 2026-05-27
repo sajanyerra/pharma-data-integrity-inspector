@@ -315,6 +315,7 @@ async def get_anomalies(
     limit: int = 100
 ):
     """Get detected anomalies with optional status filter"""
+    import json as _json
     async with async_session_maker() as session:
         from sqlalchemy import select
         
@@ -333,22 +334,32 @@ async def get_anomalies(
             )
             tag_name = tag_info.scalar()
             
+            evidence = a.evidence or {}
+            if isinstance(evidence, str):
+                try:
+                    evidence = _json.loads(evidence)
+                except:
+                    evidence = {}
+            
+            confidence = float(a.confidence) if a.confidence else 0
+            severity = evidence.get("severity") if isinstance(evidence, dict) and evidence.get("severity") else ("high" if confidence > 0.8 else "medium" if confidence > 0.5 else "low")
+            
             response.append(
                 AnomalyResponse(
                     id=a.id,
                     tag_id=a.tag_id,
                     tag_name=tag_name,
                     anomaly_type=a.anomaly_type,
-                    confidence=float(a.confidence) if a.confidence else 0,
-                    evidence=a.evidence or {},
+                    confidence=confidence,
+                    evidence=evidence,
                     detected_at=a.detected_at,
                     hitl_status=a.hitl_status,
-                    severity=(a.evidence.get("severity") if isinstance(a.evidence, dict) and a.evidence.get("severity") else ("high" if float(a.confidence) > 0.8 else "medium" if float(a.confidence) > 0.5 else "low")) if a.confidence else "low",
+                    severity=severity,
                     hypothesis=a.hypothesis,
                     recommended_action=a.recommended_action
                 )
             )
-            if isinstance(a.evidence, dict) and a.evidence.get("is_silent_lie"):
+            if isinstance(evidence, dict) and evidence.get("is_silent_lie"):
                 response[-1].evidence["is_silent_lie"] = True
         
         return response
