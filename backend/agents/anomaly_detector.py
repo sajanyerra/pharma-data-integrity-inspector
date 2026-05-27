@@ -99,16 +99,31 @@ class AnomalyDetector(BaseAgent):
 
             data_cache = await self._load_all_readings(hours)
 
+            print(f"[AnomalyDetector] Loaded {len(data_cache)} tags, {sum(len(d['values']) for d in data_cache.values())} total readings")
+
             for tag_id, profile in tag_profiles.items():
                 metadata = tag_metadata.get(tag_id, {})
                 data_type = metadata.get("data_type", "Unknown")
                 tag_data = data_cache.get(tag_id)
                 if not tag_data or len(tag_data["values"]) < 10:
+                    print(f"[AnomalyDetector] SKIP {tag_id}: only {len(tag_data['values']) if tag_data else 0} readings")
                     continue
 
                 values_array = tag_data["values"]
                 timestamps = tag_data["timestamps"]
                 quality_codes = tag_data["quality_codes"]
+
+                print(f"[AnomalyDetector] {tag_id}: {len(values_array)} readings, mean={np.mean(values_array):.2f}, std={np.std(values_array):.2f}, min={np.min(values_array):.2f}, max={np.max(values_array):.2f}")
+
+                drift_anomaly = self._check_sensor_drift(tag_id, values_array, profile)
+                if drift_anomaly:
+                    anomalies.append(drift_anomaly)
+                    print(f"  -> DRIFT detected: {drift_anomaly['evidence']}")
+
+                stuck_anomaly = self._check_stuck_value(tag_id, values_array, readings_like)
+                if stuck_anomaly:
+                    anomalies.append(stuck_anomaly)
+                    print(f"  -> STUCK detected: {stuck_anomaly['evidence']}")
 
                 readings_like = [
                     {"value": v, "quality_code": qc, "timestamp": ts}
@@ -133,12 +148,17 @@ class AnomalyDetector(BaseAgent):
 
             correlation_anomalies = self._check_correlations_cached(data_cache)
             anomalies.extend(correlation_anomalies)
+            print(f"[AnomalyDetector] Correlation anomalies: {len(correlation_anomalies)}")
 
             pharma_anomalies = await self._check_pharma_specific_cached(data_cache, tag_metadata)
             anomalies.extend(pharma_anomalies)
+            print(f"[AnomalyDetector] Pharma anomalies: {len(pharma_anomalies)}")
 
             silent_lie_anomalies = self._check_cross_sensor_consistency_cached(tag_profiles, data_cache)
             anomalies.extend(silent_lie_anomalies)
+            print(f"[AnomalyDetector] Cross-sensor anomalies: {len(silent_lie_anomalies)}")
+
+            print(f"[AnomalyDetector] TOTAL anomalies: {len(anomalies)}")
 
             result = {
                 "anomalies": anomalies,
@@ -185,17 +205,19 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
             return f"{len(anomalies)} anomalies detected across 11 integrity checks. Review each for pharma manufacturing impact."
     
     def _check_sensor_drift(self, tag_id: str, values: np.ndarray, profile: Dict) -> Dict:
-        """Check 1: Sensor Drift - Compare 1h vs 6h rolling mean"""
-        if len(values) < 120:
-            return None
-        
+        """Check 1: Sensor Drift - Compare last 1h vs previous 6h mean"""
         n = len(values)
-        # At 30-sec intervals: 1h = 120 points, 6h = 720 points
-        recent_size = min(120, n // 4)   # ~1 hour
-        previous_size = min(720, n // 2)  # ~6 hours
-        
-        if recent_size < 30 or previous_size < 100:
+        if n < 30:
             return None
+
+        # Estimate interval: assume 24h window, so interval ≈ 86400/n seconds
+        interval_sec = 86400.0 / n
+        recent_size = max(10, int(3600 / interval_sec))   # 1 hour of data
+        previous_size = max(30, int(21600 / interval_sec)) # 6 hours of data
+        
+        if recent_size + previous_size > n:
+            recent_size = max(10, n // 4)
+            previous_size = max(30, n // 2)
         
         recent_1h = values[-recent_size:]
         previous_6h = values[-(recent_size + previous_size):-recent_size]
@@ -205,6 +227,8 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         
         deviation = abs(recent_mean - previous_mean) / (abs(previous_mean) + 0.001) * 100
         drift_rate = deviation / 6
+        
+        print(f"  [drift] {tag_id}: recent_mean={recent_mean:.2f}, previous_mean={previous_mean:.2f}, deviation={deviation:.2f}%, drift_rate={drift_rate:.3f} (threshold=0.5)")
         
         if drift_rate > 0.5:
             return {
@@ -223,16 +247,20 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         return None
     
     def _check_stuck_value(self, tag_id: str, values: np.ndarray, readings: List) -> Dict:
-        """Check 2: Stuck Value - Scan with sliding 1h windows"""
-        if len(values) < 120:
+        """Check 2: Stuck Value - Scan with sliding 1h windows, adaptive to data interval"""
+        n = len(values)
+        if n < 30:
             return None
-        
-        window_size = min(120, len(values) // 4)
+
+        interval_sec = 86400.0 / n
+        window_size = max(10, int(3600 / interval_sec))  # 1 hour
         step = max(window_size // 2, 1)
+        print(f"  [stuck] {tag_id}: n={n}, interval={interval_sec:.1f}s, window={window_size}, step={step}")
         for start in range(0, len(values) - window_size + 1, step):
             window = values[start:start + window_size]
             unique_values = len(np.unique(window))
             if unique_values < 3:
+                print(f"  [stuck] {tag_id}: DETECTED at window {start}-{start+window_size}, unique={unique_values}, value={window[0]:.3f}")
                 return {
                     "tag_id": tag_id,
                     "anomaly_type": "stuck_value",
@@ -515,13 +543,23 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         for suspect_tag, config in self.cross_sensor_groups.items():
             suspect_profile = tag_profiles.get(suspect_tag)
             if not suspect_profile:
+                print(f"  [cross-sensor] {suspect_tag}: SKIP - no profile")
                 continue
 
             suspect_data = data_cache.get(suspect_tag)
-            if not suspect_data or len(suspect_data["values"]) < 60:
+            if not suspect_data or len(suspect_data["values"]) < 30:
+                print(f"  [cross-sensor] {suspect_tag}: SKIP - only {len(suspect_data['values']) if suspect_data else 0} readings")
                 continue
 
             suspect_values = suspect_data["values"]
+            n_suspect = len(suspect_values)
+            interval_sec = 86400.0 / n_suspect if n_suspect > 0 else 30
+            print(f"  [cross-sensor] {suspect_tag}: {n_suspect} readings, interval={interval_sec:.1f}s, mean={np.mean(suspect_values):.2f}, std={np.std(suspect_values):.2f}")
+            # Adaptive window: 1 hour at current data interval
+            window_size = max(30, int(3600 / interval_sec))
+            step = max(window_size // 2, 1)
+            half_window = max(15, window_size // 2)
+            
             suspect_mean = float(np.mean(suspect_values))
             suspect_std = float(np.std(suspect_values))
 
@@ -532,7 +570,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
 
             for witness_tag, rel in config['relationships'].items():
                 witness_data = data_cache.get(witness_tag)
-                if not witness_data or len(witness_data["values"]) < 60:
+                if not witness_data or len(witness_data["values"]) < 30:
                     continue
 
                 witness_values = witness_data["values"]
@@ -548,8 +586,6 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
 
                 overall_corr, _ = stats.pearsonr(s, w)
 
-                window_size = 120  # 1 hour at 30-sec intervals
-                step = 60
                 segment_correlations = []
 
                 for start in range(0, n - window_size, step):
@@ -569,10 +605,10 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
                 correlation_drop = baseline_corr - recent_corr
 
                 if correlation_drop > 0.2 and abs(baseline_corr) > 0.05:
-                    s_recent = suspect_values[-120:]
-                    w_recent = witness_values[-120:]
-                    s_recent_trend = float(np.mean(s_recent[-60:]) - np.mean(s_recent[:60]))
-                    w_recent_trend = float(np.mean(w_recent[-60:]) - np.mean(w_recent[:60]))
+                    s_recent = suspect_values[-window_size:]
+                    w_recent = witness_values[-window_size:]
+                    s_recent_trend = float(np.mean(s_recent[-half_window:]) - np.mean(s_recent[:half_window]))
+                    w_recent_trend = float(np.mean(w_recent[-half_window:]) - np.mean(w_recent[:half_window]))
 
                     expected_direction = 1 if rel['direction'] == 'same' else -1
 

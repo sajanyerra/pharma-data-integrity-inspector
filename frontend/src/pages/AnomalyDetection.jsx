@@ -123,7 +123,7 @@ export default function AnomalyDetection() {
         <div className="flex items-center gap-3">
           <button onClick={runAnalysis} disabled={runningAnalysis} className="btn-primary flex items-center gap-2">
             <RefreshCw className={`w-4 h-4 ${runningAnalysis ? 'animate-spin' : ''}`} />
-            {runningAnalysis ? 'Running...' : 'Run Analysis'}
+            {runningAnalysis ? 'Analyzing (~30s)...' : 'Run Analysis'}
           </button>
           <button onClick={async () => { try { await axios.delete(`${API_BASE}/anomalies/clear`); await fetchAnomalies() } catch {} }} className="btn-secondary flex items-center gap-2">
             <Trash className="w-4 h-4" />Clear
