@@ -28,9 +28,10 @@ class ReportGenerator(BaseAgent):
         self.reports_dir = Path(__file__).parent.parent.parent / "reports"
         self.reports_dir.mkdir(exist_ok=True)
         self.llm = ChatOpenAI(
-            model="gpt-3.5-turbo",
+            model=settings.LLM_MODEL,
             temperature=0.2,
-            openai_api_key=settings.OPENAI_API_KEY
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL,
         )
         
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:

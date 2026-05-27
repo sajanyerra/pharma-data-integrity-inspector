@@ -76,8 +76,8 @@ export default function HypothesisView() {
         <h1 className="text-2xl font-bold text-foreground">Root Cause Hypotheses</h1>
         <div className="card p-10 text-center">
           <Lightbulb className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-          <h3 className="text-base font-semibold text-foreground">No hypotheses yet</h3>
-          <p className="text-sm text-muted-foreground mt-1">Approve anomalies first, then generate</p>
+          <h3 className="text-base font-semibold text-foreground">Ready to generate hypotheses</h3>
+          <p className="text-sm text-muted-foreground mt-1">Click below to let Agent 3 analyze approved anomalies</p>
           <button onClick={generateHypotheses} disabled={generating} className="btn-primary mt-4">
             {generating ? <span className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />Generating...</span> : 'Generate Hypotheses'}
           </button>

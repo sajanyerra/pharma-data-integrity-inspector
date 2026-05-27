@@ -19,9 +19,10 @@ class DataProfiler(BaseAgent):
     def __init__(self):
         super().__init__("DataProfiler")
         self.llm = ChatOpenAI(
-            model="gpt-3.5-turbo",
+            model=settings.LLM_MODEL,
             temperature=0.2,
-            openai_api_key=settings.OPENAI_API_KEY
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL,
         )
         
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:

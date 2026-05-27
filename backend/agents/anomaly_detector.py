@@ -20,9 +20,10 @@ class AnomalyDetector(BaseAgent):
     def __init__(self):
         super().__init__("AnomalyDetector")
         self.llm = ChatOpenAI(
-            model="gpt-3.5-turbo",
+            model=settings.LLM_MODEL,
             temperature=0.2,
-            openai_api_key=settings.OPENAI_API_KEY
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL,
         )
         
         self.correlated_pairs = [
@@ -189,11 +190,13 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
             return None
         
         n = len(values)
-        # Adapt window sizes to available data
-        recent_size = min(60, n // 4)   # last ~1 hour (or 60 points at 1-min intervals)
-        previous_size = min(360, n // 2)  # previous ~6 hours
+        # Use last 1 hour and previous 6 hours of data
+        # At 5-sec intervals: 1h = 720 points, 6h = 4320 points
+        # At 1-min intervals: 1h = 60 points, 6h = 360 points
+        recent_size = min(720, n // 4)   # ~1 hour
+        previous_size = min(4320, n // 2)  # ~6 hours
         
-        if recent_size < 10 or previous_size < 30:
+        if recent_size < 30 or previous_size < 100:
             return None
         
         recent_1h = values[-recent_size:]
@@ -222,11 +225,11 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         return None
     
     def _check_stuck_value(self, tag_id: str, values: np.ndarray, readings: List) -> Dict:
-        """Check 2: Stuck Value - Scan full period with adaptive windows"""
-        if len(values) < 60:
+        """Check 2: Stuck Value - Scan full period with 1h windows"""
+        if len(values) < 360:
             return None
         
-        window_size = min(60, len(values) // 3)
+        window_size = min(720, len(values) // 4)  # ~1 hour
         step = window_size
         for start in range(0, len(values) - window_size + 1, step):
             window = values[start:start + window_size]

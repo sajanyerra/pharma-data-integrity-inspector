@@ -10,10 +10,9 @@ class Settings(BaseSettings):
     LANGSMITH_PROJECT: str = "pharma-data-integrity"
     LANGSMITH_TRACING: bool = True
     LANGSMITH_ENDPOINT: str = "https://eu.api.smith.langchain.com"
-    OLLAMA_CLOUD_API_KEY: str = ""
-    OLLAMA_BASE_URL: str = "https://ollama.cloud/v1"
-    OLLAMA_MODEL: str = "qwen3.5:397b"
-    OPENAI_API_KEY: str = ""
+    LLM_API_KEY: str = ""
+    LLM_BASE_URL: str = "https://api.groq.com/openai/v1"
+    LLM_MODEL: str = "llama-3.1-8b-instant"
     HOST: str = os.environ.get("HOST", "0.0.0.0")
     PORT: int = int(os.environ.get("PORT", "8000"))
 

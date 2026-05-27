@@ -21,9 +21,10 @@ class HypothesisGenerator(BaseAgent):
         
         # Initialize LLM with OpenAI
         self.llm = ChatOpenAI(
-            model="gpt-3.5-turbo",
+            model=settings.LLM_MODEL,
             temperature=0.3,
-            openai_api_key=settings.OPENAI_API_KEY
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL,
         )
         
         # Root cause knowledge base
