@@ -60,7 +60,7 @@ class DataProfiler(BaseAgent):
                 # Get readings for last N hours
                 cutoff_time = datetime.utcnow() - timedelta(hours=hours)
                 readings = await self.db_conn.fetch(
-                    "SELECT value, quality_code, timestamp FROM tag_readings WHERE tag_id = $1 AND timestamp >= $2 ORDER BY timestamp DESC LIMIT 10000",
+                    "SELECT value, quality_code, timestamp FROM tag_readings WHERE tag_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC LIMIT 10000",
                     tag_id, cutoff_time
                 )
                 

@@ -425,20 +425,22 @@ async def run_analysis(request: RunAnalysisRequest):
     _analysis_jobs[job_id] = {"status": "running", "progress": "Starting pipeline...", "result": None, "error": None}
     
     async def _run():
-    try:
-        pipeline = PharmaPipeline()
-        result = await pipeline.run({
-            "hours": request.hours,
-            "tag_ids": request.tag_ids
-        })
-        
-        _analysis_jobs[job_id]["progress"] = "Clearing old anomalies..."
-        async with async_session_maker() as session:
-            from sqlalchemy import text
-            await session.execute(text("DELETE FROM anomalies"))
-            await session.commit()
+        try:
+            pipeline = PharmaPipeline()
+            result = await pipeline.run({
+                "hours": request.hours,
+                "tag_ids": request.tag_ids
+            })
+            
+            _analysis_jobs[job_id]["progress"] = "Clearing old anomalies..."
+            async with async_session_maker() as session:
+                from sqlalchemy import text
+                await session.execute(text("DELETE FROM anomalies"))
+                await session.commit()
+            
             _analysis_jobs[job_id]["progress"] = "Saving anomalies..."
-                
+            async with async_session_maker() as session:
+                from sqlalchemy import text
                 for anomaly in result["anomalies"]:
                     evidence = anomaly.get("evidence", {})
                     if not isinstance(evidence, dict):
@@ -486,6 +488,8 @@ async def run_analysis(request: RunAnalysisRequest):
                 "error": None
             }
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             _analysis_jobs[job_id] = {
                 "status": "failed",
                 "progress": "Failed",
