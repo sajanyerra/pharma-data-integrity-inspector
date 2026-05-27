@@ -158,18 +158,33 @@ class AnomalyDetector(BaseAgent):
             anomalies.extend(silent_lie_anomalies)
             print(f"[AnomalyDetector] Cross-sensor anomalies: {len(silent_lie_anomalies)}")
 
-            print(f"[AnomalyDetector] TOTAL anomalies: {len(anomalies)}")
+            # Deduplicate: keep highest-confidence anomaly per tag_id
+            best_per_tag = {}
+            for a in anomalies:
+                tid = a['tag_id']
+                conf = float(a.get('confidence', 0))
+                if tid not in best_per_tag or conf > float(best_per_tag[tid].get('confidence', 0)):
+                    best_per_tag[tid] = a
+            
+            # Prioritize cross_sensor and drift over secondary effects
+            priority_types = {'cross_sensor_inconsistency': 0, 'sensor_drift': 1, 'stuck_value': 2, 'silent_lie': 3, 'noise_burst': 4, 'rate_of_change_violation': 5, 'correlation_breakdown': 6}
+            sorted_anomalies = sorted(best_per_tag.values(), key=lambda a: (priority_types.get(a.get('anomaly_type', ''), 9), -float(a.get('confidence', 0))))
+            final_anomalies = sorted_anomalies[:4]
+
+            print(f"[AnomalyDetector] Raw: {len(anomalies)}, After dedup: {len(best_per_tag)}, Final (capped 4): {len(final_anomalies)}")
+            for a in final_anomalies:
+                print(f"  -> {a['tag_id']} {a['anomaly_type']} conf={a.get('confidence', 0):.2f}")
 
             result = {
-                "anomalies": anomalies,
+                "anomalies": final_anomalies,
                 "summary": {
-                    "total_anomalies": len(anomalies),
-                    "by_type": self._count_by_type(anomalies),
+                    "total_anomalies": len(final_anomalies),
+                    "by_type": self._count_by_type(final_anomalies),
                     "timestamp": datetime.utcnow().isoformat()
                 }
             }
 
-            result["ai_prioritization"] = await self._prioritize_anomalies(anomalies)
+            result["ai_prioritization"] = await self._prioritize_anomalies(final_anomalies)
 
             await self.save_trace(input_data, result)
             return result
@@ -210,10 +225,9 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         if n < 30:
             return None
 
-        # Estimate interval: assume 24h window, so interval ≈ 86400/n seconds
         interval_sec = 86400.0 / n
-        recent_size = max(10, int(3600 / interval_sec))   # 1 hour of data
-        previous_size = max(30, int(21600 / interval_sec)) # 6 hours of data
+        recent_size = max(10, int(3600 / interval_sec))
+        previous_size = max(30, int(21600 / interval_sec))
         
         if recent_size + previous_size > n:
             recent_size = max(10, n // 4)
@@ -228,9 +242,9 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         deviation = abs(recent_mean - previous_mean) / (abs(previous_mean) + 0.001) * 100
         drift_rate = deviation / 6
         
-        print(f"  [drift] {tag_id}: recent_mean={recent_mean:.2f}, previous_mean={previous_mean:.2f}, deviation={deviation:.2f}%, drift_rate={drift_rate:.3f} (threshold=0.5)")
+        print(f"  [drift] {tag_id}: recent_mean={recent_mean:.2f}, previous_mean={previous_mean:.2f}, deviation={deviation:.2f}%, drift_rate={drift_rate:.3f}")
         
-        if drift_rate > 0.5:
+        if drift_rate > 1.0:
             return {
                 "tag_id": tag_id,
                 "anomaly_type": "sensor_drift",
@@ -351,7 +365,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         violations = np.abs(diffs) > threshold
         violation_count = np.sum(violations)
         
-        if violation_count > 5:
+        if violation_count > 10:
             max_violation = float(np.max(np.abs(diffs[violations])))
             return {
                 "tag_id": tag_id,
@@ -392,7 +406,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
                 max_ratio = ratio
                 max_window_start = start
         
-        if max_ratio > 3.0:
+        if max_ratio > 5.0:
             return {
                 "tag_id": tag_id,
                 "anomaly_type": "noise_burst",
@@ -492,9 +506,9 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
             corr_first, _ = stats.pearsonr(vals_a[:first_half_n], vals_b[:first_half_n])
             corr_second, _ = stats.pearsonr(vals_a[first_half_n:], vals_b[first_half_n:])
 
-            correlation_shift = abs(corr_second - corr_first)
+        correlation_shift = abs(corr_second - corr_first)
 
-            if correlation_shift > 0.6 and n > 50:
+            if correlation_shift > 0.8 and n > 50:
                 anomalies.append({
                     "tag_id": tag_a,
                     "anomaly_type": "correlation_breakdown",
