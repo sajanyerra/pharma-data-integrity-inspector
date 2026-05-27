@@ -98,6 +98,7 @@ class AnomalyDetector(BaseAgent):
                 values = [float(r["value"]) for r in readings if r["value"] is not None]
                 
                 if len(values) < 10:
+                    continue
                 
                 values_array = np.array(values)
                 
