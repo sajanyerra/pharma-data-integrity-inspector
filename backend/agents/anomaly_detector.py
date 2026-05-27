@@ -341,10 +341,10 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         gaps = []
         for i in range(1, len(readings)):
             time_diff = (readings[i]["timestamp"] - readings[i-1]["timestamp"]).total_seconds()
-            if time_diff > 10:
+            if time_diff > 300:
                 gaps.append(time_diff)
         
-        if gaps:
+        if gaps and len(gaps) > 3:
             return {
                 "tag_id": tag_id,
                 "anomaly_type": "data_gaps",

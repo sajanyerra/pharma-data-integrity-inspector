@@ -79,14 +79,14 @@ async def _seed_background():
             if count > 0:
                 print(f"Database has {count:,} readings — skipping seed")
                 return
-            print("No readings found — seeding 24h of historical data (1-min intervals)...")
+            print("No readings found — seeding 24h of historical data (5-sec intervals)...")
             simulator = TagSimulator(seed=42)
             start_time = datetime.utcnow() - timedelta(hours=24)
             batch_size = 500
             batch = []
             inserted = 0
-            for i in range(24 * 60):
-                ts = start_time + timedelta(minutes=i)
+            for i in range(24 * 720):  # 5-second intervals
+                ts = start_time + timedelta(seconds=i * 5)
                 readings = simulator.generate_all_tags(ts)
                 for r in readings:
                     batch.append({
@@ -521,8 +521,8 @@ async def reseed_data():
         batch = []
         inserted = 0
         async with async_session_maker() as session:
-            for i in range(24 * 60):
-                ts = start_time + timedelta(minutes=i)
+            for i in range(24 * 720):  # 5-second intervals
+                ts = start_time + timedelta(seconds=i * 5)
                 readings = simulator.generate_all_tags(ts)
                 for r in readings:
                     batch.append({
