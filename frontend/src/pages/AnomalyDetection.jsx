@@ -119,7 +119,7 @@ export default function AnomalyDetection() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Anomaly Detection</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">11 integrity checks applied across 20 tags</p>
+          <p className="text-muted-foreground text-sm mt-0.5">9 integrity checks applied across 20 tags</p>
         </div>
         <div className="flex items-center gap-3">
           <button onClick={runAnalysis} disabled={runningAnalysis} className="btn-primary flex items-center gap-2">

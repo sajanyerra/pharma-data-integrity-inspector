@@ -1021,37 +1021,33 @@ async def get_pipeline_info():
         "orchestration": "LangGraph StateGraph (v0.2.x) with conditional HITL edge",
         "agents": [
             {
-                "id": 1, "name": "Data Profiler", "engine": "SQLAlchemy + numpy + ChatOpenAI",
-                "flow": "Read tag_readings → compute mean/std/quartiles → GPT interprets data quality"
+                "id": 1, "name": "Anomaly Detector", "engine": "SQLAlchemy + numpy + scipy + ChatOpenAI (Groq)",
+                "flow": "1 bulk query → compute inline profiles → 9 integrity checks → dedup+cap at 4 → async LLM prioritization"
             },
             {
-                "id": 2, "name": "Anomaly Detector", "engine": "scipy.stats + numpy + ChatOpenAI",
-                "flow": "11 integrity checks (rules) → GPT analyzes pattern of findings"
+                "id": 2, "name": "Hypothesis Generator", "engine": "ChatOpenAI (Groq) + PromptTemplate + OutputGuardrail",
+                "flow": "Approved anomalies → LLM proposes root causes → guardrail redacts PII"
             },
             {
-                "id": 3, "name": "Hypothesis Generator", "engine": "ChatOpenAI + PromptTemplate + OutputGuardrail",
-                "flow": "Approved anomalies → GPT proposes root causes → guardrail redacts PII"
-            },
-            {
-                "id": 4, "name": "Report Generator", "engine": "Jinja2 + ChatOpenAI + OutputGuardrail",
-                "flow": "All evidence → GPT writes executive narrative → PDF/HTML/JSON output"
+                "id": 3, "name": "Report Generator", "engine": "Jinja2 + ChatOpenAI (Groq) + OutputGuardrail",
+                "flow": "All evidence → LLM writes executive narrative → PDF/HTML/JSON output"
             },
         ],
         "guardrail": {
             "name": "OutputGuardrail",
             "checks": ["PII redaction (SSN, email, phone, IP, names)", "Pharma-sensitive (batch/lot numbers, patient refs)", "Credential redaction", "Dangerous recommendation blocking", "Confidence bounding (cap at 0.95)"],
-            "applied_to": ["Agent 3 (hypothesis output)", "Agent 4 (report data)"]
+            "applied_to": ["Agent 2 (hypothesis output)", "Agent 3 (report data)"]
         },
         "hitl": {
             "name": "Human-in-the-Loop Gate",
-            "position": "Between Agent 2 and Agent 3",
+            "position": "Between Agent 1 and Agent 2",
             "purpose": "Human must approve anomalies before AI generates root causes — prevents AI from acting on false alarms",
             "statuses": ["pending → approved → hypothesis generated", "pending → rejected → no action"]
         },
         "silent_lie": {
             "concept": "A sensor that reads within normal range but is wrong. Passes quality codes, passes threshold checks, but contradicts its correlated sensors.",
             "example": "TI-101 reports 172°C (within 150-200 range, Good quality). But PI-101 trends up (suggesting 175°C+) and FI-201 rises (cooling compensating for heat you don't see). The sensor is wrong.",
-            "detection": "Check 11: segmented window correlation + trend direction analysis against witness sensors"
+            "detection": "Check 9: segmented window correlation + trend direction analysis against witness sensors"
         }
     }
 
@@ -1062,9 +1058,9 @@ async def get_tech_stack():
         {
             "category": "LLM & Orchestration",
             "items": [
-                {"name": "OpenAI GPT-4o", "role": "LLM reasoning engine for all 4 agents", "icon": "Brain"},
+                {"name": "Groq Llama 3.1 8B Instant", "role": "Fast LLM for all 3 agents via langchain_openai", "icon": "Brain"},
                 {"name": "LangChain", "role": "Prompt templates, output parsers, agent tool framework", "icon": "Link2"},
-                {"name": "LangGraph", "role": "StateGraph orchestration — conditional HITL edge between Agent 2 and 3", "icon": "GitBranch"},
+                {"name": "LangGraph", "role": "StateGraph orchestration — conditional HITL edge between Agent 1 and 2", "icon": "GitBranch"},
                 {"name": "LangSmith", "role": "Trace logging, evaluation, and debug (EU endpoint)", "icon": "Activity"},
             ]
         },

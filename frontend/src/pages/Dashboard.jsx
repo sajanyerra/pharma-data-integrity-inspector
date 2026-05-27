@@ -15,10 +15,9 @@ const TAG_ICONS = {
 }
 
 const AGENTS = [
-  { num: '1', name: 'Data Profiler', icon: BarChart3, color: 'bg-slate-500', lightColor: 'bg-slate-50 dark:bg-slate-900/20', desc: 'Reads sensor data and builds statistical profiles, then AI interprets data quality signals.' },
-  { num: '2', name: 'Anomaly Detector', icon: AlertTriangle, color: 'bg-violet-500', lightColor: 'bg-violet-50 dark:bg-violet-900/20', desc: 'Runs 11 integrity checks (including Cross-Sensor Corroboration), then AI prioritizes findings by pharma risk.' },
-  { num: '3', name: 'Hypothesis Generator', icon: Cpu, color: 'bg-teal-500', lightColor: 'bg-teal-50 dark:bg-teal-900/20', desc: 'Uses AI to propose root causes with confidence scores and remediation steps.' },
-  { num: '4', name: 'Report Generator', icon: FileText, color: 'bg-orange-500', lightColor: 'bg-orange-50 dark:bg-orange-900/20', desc: 'Packages findings into PDF, HTML, JSON, with AI-written executive narrative.' },
+  { num: '1', name: 'Anomaly Detector', icon: AlertTriangle, color: 'bg-violet-500', lightColor: 'bg-violet-50 dark:bg-violet-900/20', desc: 'Loads 24h of sensor data in 1 query, computes inline profiles, runs 9 integrity checks (including Cross-Sensor Corroboration), then AI prioritizes findings. Returns in ~5s.' },
+  { num: '2', name: 'Hypothesis Generator', icon: Cpu, color: 'bg-teal-500', lightColor: 'bg-teal-50 dark:bg-teal-900/20', desc: 'Uses AI to propose root causes with confidence scores and remediation steps. Guardrail blocks PII and pharma-sensitive data.' },
+  { num: '3', name: 'Report Generator', icon: FileText, color: 'bg-orange-500', lightColor: 'bg-orange-50 dark:bg-orange-900/20', desc: 'Packages findings into PDF, HTML, JSON, with AI-written executive narrative. Guardrail checks for dangerous recommendations.' },
 ]
 
 export default function Dashboard({ liveTags = [] }) {
@@ -109,7 +108,7 @@ export default function Dashboard({ liveTags = [] }) {
 
       {/* Agent cards */}
       <div>
-        <h2 className="text-sm font-bold text-foreground mb-3">How the 4 Agents Work</h2>
+        <h2 className="text-sm font-bold text-foreground mb-3">How the 3 Agents Work</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {AGENTS.map((agent, i) => {
             const Icon = agent.icon
@@ -169,7 +168,7 @@ export default function Dashboard({ liveTags = [] }) {
             </div>
             <div>
               <p className="text-sm font-bold text-foreground">Human-in-the-Loop Gate</p>
-              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">Between Agent 2 and 3 — you approve which anomalies get AI root cause analysis. Required for FDA 21 CFR Part 11.</p>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">Between Agent 1 and 2 — you approve which anomalies get AI root cause analysis. Required for FDA 21 CFR Part 11.</p>
             </div>
           </div>
         </div>

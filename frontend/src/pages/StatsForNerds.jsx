@@ -207,7 +207,7 @@ export default function StatsForNerds() {
           <div className="bg-secondary p-3 rounded-lg mb-3 text-xs text-muted-foreground space-y-1.5">
             <p><strong className="text-foreground">Why this is dangerous:</strong> You released a batch based on temperature data that was wrong. The actual process was 3°C hotter. In pharma, that difference can invalidate a batch.</p>
             <p><strong className="text-foreground">Why no product catches this:</strong> Historians check each sensor in isolation (thresholds, quality codes). Analytics tools assume the data is correct. Nobody cross-references correlated sensors to ask: "Does this reading make sense given what the other sensors are doing?"</p>
-            <p><strong className="text-foreground">How we catch it:</strong> Check 11 segments the correlation timeline between a suspect tag and its physically-coupled witnesses. When the correlation pattern changes and trends contradict the expected physical relationship, we flag it — even though the reading itself looks perfectly normal.</p>
+            <p><strong className="text-foreground">How we catch it:</strong> Check 9 segments the correlation timeline between a suspect tag and its physically-coupled witnesses. When the correlation pattern changes and trends contradict the expected physical relationship, we flag it — even though the reading itself looks perfectly normal.</p>
           </div>
           {causalGroups?.silent_lie && (
             <div className="text-xs text-muted-foreground">
@@ -374,7 +374,7 @@ export default function StatsForNerds() {
                   <p className="text-xs text-foreground">{pipeline.orchestration}</p>
                 </div>
                 <div className="space-y-2">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase">4 Agents</p>
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase">3 Agents</p>
                   {pipeline.agents.map(a => (
                     <div key={a.id} className="p-3 rounded-lg border border-border">
                       <div className="flex items-center gap-2 mb-1">
@@ -427,7 +427,7 @@ export default function StatsForNerds() {
             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
               <div className="px-5 pb-4 space-y-3">
                 {[
-                  { q: "What is Cross-Sensor Corroboration?", a: "Check 11. It catches sensors that read within normal range, pass quality codes, and pass every threshold check — but are wrong. A temp sensor reads 172°C but its correlated pressure and flow sensors say 175°C. No historian catches this." },
+                   { q: "What is Cross-Sensor Corroboration?", a: "Check 9. It catches sensors that read within normal range, pass quality codes, and pass every threshold check — but are wrong. A temp sensor reads 172°C but its correlated pressure and flow sensors say 175°C. No historian catches this." },
                   { q: "Why call them 'agents' and not 'modules'?", a: "Each agent has its own LLM reasoning layer on top of deterministic logic. The deterministic code is the tool; the LLM is the reasoner. That's the agent pattern — tools do the work, the AI reasons about the output." },
                   { q: "How is this different from Seeq?", a: "Seeq assumes your data is trustworthy and analyzes the process. We question whether the data is trustworthy in the first place. Seeq tells you 'reactor temp is trending up.' We tell you 'the temp sensor is lying — don't trust that Seeq alert.'" },
                   { q: "How is this different from AVEVA PI quality codes?", a: "PI quality codes are per-sensor, per-reading. They flag broken communication, out-of-range, etc. They cannot detect a sensor that's wrong-but-plausible (within range, Good quality code, but contradicted by other sensors). That's what Cross-Sensor Corroboration catches." },

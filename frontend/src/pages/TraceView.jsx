@@ -20,10 +20,9 @@ const AGENT_COLORS = {
 }
 
 const AGENT_DESCRIPTIONS = {
-  DataProfiler: { title: 'Agent 1: Data Profiler', what: 'Computes mean, std, quartiles for each sensor tag. AI interprets data quality signals.', why: 'Provides baselines + AI interpretation the Anomaly Detector needs.' },
-  AnomalyDetector: { title: 'Agent 2: Anomaly Detector', what: '11 integrity checks (including Cross-Sensor Corroboration), then AI prioritizes findings by pharma risk.', why: 'Identifies sensors with data integrity problems + AI explains systemic risk.' },
-  HypothesisGenerator: { title: 'Agent 3: Hypothesis Generator', what: 'AI proposes root causes with pharma domain knowledge and confidence scores.', why: 'Explains WHY something went wrong, with actionable remediation steps.' },
-  ReportGenerator: { title: 'Agent 4: Report Generator', what: 'Compiles findings into PDF, HTML, JSON. AI writes executive narrative.', why: 'Creates audit-ready docs with AI-generated insight for FDA 21 CFR Part 11.' },
+  AnomalyDetector: { title: 'Agent 1: Anomaly Detector', what: '1 bulk query → inline profiles → 9 integrity checks (including Cross-Sensor Corroboration) → dedup+cap at 4 → async LLM prioritization.', why: 'Identifies sensors with data integrity problems. Returns in ~5s, LLM interpretation arrives async.' },
+  HypothesisGenerator: { title: 'Agent 2: Hypothesis Generator', what: 'AI proposes root causes with pharma domain knowledge and confidence scores.', why: 'Explains WHY something went wrong, with actionable remediation steps.' },
+  ReportGenerator: { title: 'Agent 3: Report Generator', what: 'Compiles findings into PDF, HTML, JSON. AI writes executive narrative.', why: 'Creates audit-ready docs with AI-generated insight for FDA 21 CFR Part 11.' },
 }
 
 export default function TraceView() {
