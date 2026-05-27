@@ -11,6 +11,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 import asyncio
+import uuid
 
 from database import init_db, get_db, async_session_maker
 from models import Tag, TagReading, Anomaly, AgentTrace
@@ -64,6 +65,7 @@ class RunAnalysisRequest(BaseModel):
 
 
 _seed_task = None
+_analysis_jobs = {}
 
 
 async def _seed_background():
@@ -387,167 +389,220 @@ async def select_anomalies_batch(selections: List[AnomalySelection]):
 
 @app.post("/analyze")
 async def run_analysis(request: RunAnalysisRequest):
-    """
-    Run full multi-agent analysis pipeline using LangGraph orchestration.
-    Steps 1+2 (Profile+Detect) run here. Step 3 (Hypothesize) runs after HITL approval.
-    """
-    try:
-        pipeline = PharmaPipeline()
-        result = await pipeline.run({
-            "hours": request.hours,
-            "tag_ids": request.tag_ids
-        })
-        
-        async with async_session_maker() as session:
-            from sqlalchemy import text
-            import json
-            await session.execute(text("DELETE FROM anomalies"))
+    """Start analysis in background. Returns job_id immediately."""
+    job_id = str(uuid.uuid4())[:8]
+    _analysis_jobs[job_id] = {"status": "running", "progress": "Starting pipeline...", "result": None, "error": None}
+    
+    async def _run():
+        try:
+            _analysis_jobs[job_id]["progress"] = "Seeding data if needed..."
+            await _wait_for_seed()
+            _analysis_jobs[job_id]["progress"] = "Running Agent 1: Data Profiler..."
+            pipeline = PharmaPipeline()
+            result = await pipeline.run({
+                "hours": request.hours,
+                "tag_ids": request.tag_ids
+            })
             
-            for anomaly in result["anomalies"]:
-                evidence = anomaly.get("evidence", {})
-                if not isinstance(evidence, dict):
-                    evidence = {}
-                evidence_clean = {}
-                for k, v in evidence.items():
-                    if hasattr(v, 'item'):
-                        evidence_clean[k] = v.item()
-                    elif isinstance(v, (int, float, str, bool, type(None))):
-                        evidence_clean[k] = v
-                    elif isinstance(v, (list, dict)):
-                        evidence_clean[k] = v
-                    else:
-                        evidence_clean[k] = str(v)
+            _analysis_jobs[job_id]["progress"] = "Saving anomalies..."
+            async with async_session_maker() as session:
+                from sqlalchemy import text
+                import json
+                await session.execute(text("DELETE FROM anomalies"))
                 
-                if anomaly.get("is_silent_lie"):
-                    evidence_clean["is_silent_lie"] = True
-                if anomaly.get("pharma_impact"):
-                    evidence_clean["pharma_impact"] = anomaly["pharma_impact"]
-                if anomaly.get("severity"):
-                    evidence_clean["severity"] = anomaly["severity"]
-                
-                await session.execute(
-                    text("""
-                        INSERT INTO anomalies (tag_id, anomaly_type, confidence, evidence, hitl_status)
-                        VALUES (:tag_id, :anomaly_type, :confidence, :evidence, 'pending')
-                    """),
-                    {
-                        "tag_id": anomaly["tag_id"],
-                        "anomaly_type": anomaly["anomaly_type"],
-                        "confidence": float(anomaly["confidence"]),
-                        "evidence": json.dumps(evidence_clean)
-                    }
-                )
-            await session.commit()
-        
-        return {
-            "status": "success",
-            "anomalies_detected": len(result["anomalies"]),
-            "message": f"LangGraph pipeline: {len(result['anomalies'])} anomalies detected. Review in HITL view."
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+                for anomaly in result["anomalies"]:
+                    evidence = anomaly.get("evidence", {})
+                    if not isinstance(evidence, dict):
+                        evidence = {}
+                    evidence_clean = {}
+                    for k, v in evidence.items():
+                        if hasattr(v, 'item'):
+                            evidence_clean[k] = v.item()
+                        elif isinstance(v, (int, float, str, bool, type(None))):
+                            evidence_clean[k] = v
+                        elif isinstance(v, (list, dict)):
+                            evidence_clean[k] = v
+                        else:
+                            evidence_clean[k] = str(v)
+                    
+                    if anomaly.get("is_silent_lie"):
+                        evidence_clean["is_silent_lie"] = True
+                    if anomaly.get("pharma_impact"):
+                        evidence_clean["pharma_impact"] = anomaly["pharma_impact"]
+                    if anomaly.get("severity"):
+                        evidence_clean["severity"] = anomaly["severity"]
+                    
+                    await session.execute(
+                        text("""
+                            INSERT INTO anomalies (tag_id, anomaly_type, confidence, evidence, hitl_status)
+                            VALUES (:tag_id, :anomaly_type, :confidence, :evidence, 'pending')
+                        """),
+                        {
+                            "tag_id": anomaly["tag_id"],
+                            "anomaly_type": anomaly["anomaly_type"],
+                            "confidence": float(anomaly["confidence"]),
+                            "evidence": json.dumps(evidence_clean)
+                        }
+                    )
+                await session.commit()
+            
+            _analysis_jobs[job_id] = {
+                "status": "completed",
+                "progress": "Done",
+                "result": {
+                    "status": "success",
+                    "anomalies_detected": len(result["anomalies"]),
+                    "message": f"LangGraph pipeline: {len(result['anomalies'])} anomalies detected. Review in HITL view."
+                },
+                "error": None
+            }
+        except Exception as e:
+            _analysis_jobs[job_id] = {
+                "status": "failed",
+                "progress": "Failed",
+                "result": None,
+                "error": str(e)
+            }
+    
+    asyncio.create_task(_run())
+    return {"job_id": job_id, "status": "started"}
+
+
+@app.get("/analyze/status/{job_id}")
+async def get_analysis_status(job_id: str):
+    """Poll for analysis job status"""
+    if job_id not in _analysis_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return _analysis_jobs[job_id]
+
+
+async def _wait_for_seed():
+    """Wait for background seeding to complete if it's running"""
+    if _seed_task is not None and not _seed_task.done():
+        await _seed_task
 
 
 @app.post("/generate-hypotheses")
 async def generate_hypotheses():
-    """
-    Generate hypotheses for approved anomalies (Agent 3)
-    """
-    try:
-        async with async_session_maker() as session:
-            from sqlalchemy import text
-            import json
-            
-            result = await session.execute(text("SELECT * FROM anomalies WHERE hitl_status = 'approved'"))
-            
-            anomalies = []
-            for row in result.fetchall():
-                row_dict = dict(row._mapping)
-                if isinstance(row_dict.get('evidence'), str):
-                    try:
-                        row_dict['evidence'] = json.loads(row_dict['evidence'])
-                    except:
-                        row_dict['evidence'] = {}
-                if 'confidence' in row_dict and row_dict['confidence'] is not None:
-                    row_dict['confidence'] = float(row_dict['confidence'])
-                row_dict.setdefault('severity', 'medium')
-                anomalies.append(row_dict)
-            
-            if not anomalies:
-                return {"status": "no_anomalies", "hypotheses": []}
-            
-            generator = HypothesisGenerator()
-            hypothesis_result = await generator.execute({
-                "anomalies": anomalies
-            })
-            
-            await session.commit()
-            
-            return {
-                "status": "success",
-                "hypotheses": hypothesis_result["hypotheses"],
-                "summary": hypothesis_result["summary"]
-            }
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Start hypothesis generation in background. Returns job_id immediately."""
+    job_id = str(uuid.uuid4())[:8]
+    _analysis_jobs[job_id] = {"status": "running", "progress": "Loading approved anomalies...", "result": None, "error": None}
+    
+    async def _run():
+        try:
+            async with async_session_maker() as session:
+                from sqlalchemy import text
+                import json
+                
+                _analysis_jobs[job_id]["progress"] = "Running Agent 3: Hypothesis Generator..."
+                result = await session.execute(text("SELECT * FROM anomalies WHERE hitl_status = 'approved'"))
+                
+                anomalies = []
+                for row in result.fetchall():
+                    row_dict = dict(row._mapping)
+                    if isinstance(row_dict.get('evidence'), str):
+                        try:
+                            row_dict['evidence'] = json.loads(row_dict['evidence'])
+                        except:
+                            row_dict['evidence'] = {}
+                    if 'confidence' in row_dict and row_dict['confidence'] is not None:
+                        row_dict['confidence'] = float(row_dict['confidence'])
+                    row_dict.setdefault('severity', 'medium')
+                    anomalies.append(row_dict)
+                
+                if not anomalies:
+                    _analysis_jobs[job_id] = {"status": "completed", "progress": "Done", "result": {"status": "no_anomalies", "hypotheses": []}, "error": None}
+                    return
+                
+                generator = HypothesisGenerator()
+                hypothesis_result = await generator.execute({
+                    "anomalies": anomalies
+                })
+                
+                await session.commit()
+                
+                _analysis_jobs[job_id] = {
+                    "status": "completed",
+                    "progress": "Done",
+                    "result": {
+                        "status": "success",
+                        "hypotheses": hypothesis_result["hypotheses"],
+                        "summary": hypothesis_result["summary"]
+                    },
+                    "error": None
+                }
+        except Exception as e:
+            _analysis_jobs[job_id] = {"status": "failed", "progress": "Failed", "result": None, "error": str(e)}
+    
+    asyncio.create_task(_run())
+    return {"job_id": job_id, "status": "started"}
 
 
 @app.post("/generate-reports")
 async def generate_reports():
-    """Generate all report formats (Agent 4)"""
-    try:
-        async with async_session_maker() as session:
-            from sqlalchemy import text
-            # Get all anomalies with hypotheses
-            result = await session.execute(text("""
-                SELECT a.*, t.tag_name
-                FROM anomalies a
-                JOIN tags t ON a.tag_id = t.tag_id
-                WHERE a.hypothesis IS NOT NULL
-                ORDER BY a.detected_at DESC
-            """))
-            anomalies = [dict(row._mapping) for row in result.fetchall()]
-            
-            for a in anomalies:
-                if 'confidence' in a and a['confidence'] is not None:
-                    a['confidence'] = float(a['confidence'])
-                if 'evidence' in a and isinstance(a['evidence'], str):
-                    import json
-                    try:
-                        a['evidence'] = json.loads(a['evidence'])
-                    except:
-                        a['evidence'] = {}
-                if not a.get('severity'):
-                    ev = a.get('evidence', {})
-                    if isinstance(ev, dict) and 'severity' in ev:
-                        a['severity'] = ev['severity']
-                    else:
-                        conf = a.get('confidence', 0.5)
-                        a['severity'] = 'high' if conf > 0.8 else 'medium' if conf > 0.5 else 'low'
-            
-            if not anomalies:
-                return {"status": "no_data", "message": "No anomalies with hypotheses found"}
-            
-            # Agent 4: Report Generator
-            report_gen = ReportGenerator()
-            report_result = await report_gen.execute({
-                "anomalies": anomalies,
-                "hypotheses": [{"tag_id": a["tag_id"], "root_cause": a.get("hypothesis", ""), "recommended_action": a.get("recommended_action", ""), "confidence": float(a.get("confidence") or 0), "anomaly_id": a.get("id"), "alternative_causes": [], "pharma_impact": ""} for a in anomalies]
-            })
-            
-            return {
-                "status": "success",
-                "reports": {
-                    "pdf": report_result["pdf_path"],
-                    "html": report_result["html_path"],
-                    "json": report_result["json_path"]
+    """Start report generation in background. Returns job_id immediately."""
+    job_id = str(uuid.uuid4())[:8]
+    _analysis_jobs[job_id] = {"status": "running", "progress": "Loading anomalies...", "result": None, "error": None}
+    
+    async def _run():
+        try:
+            async with async_session_maker() as session:
+                from sqlalchemy import text
+                import json
+                _analysis_jobs[job_id]["progress"] = "Running Agent 4: Report Generator..."
+                result = await session.execute(text("""
+                    SELECT a.*, t.tag_name
+                    FROM anomalies a
+                    JOIN tags t ON a.tag_id = t.tag_id
+                    WHERE a.hypothesis IS NOT NULL
+                    ORDER BY a.detected_at DESC
+                """))
+                anomalies = [dict(row._mapping) for row in result.fetchall()]
+                
+                for a in anomalies:
+                    if 'confidence' in a and a['confidence'] is not None:
+                        a['confidence'] = float(a['confidence'])
+                    if 'evidence' in a and isinstance(a['evidence'], str):
+                        try:
+                            a['evidence'] = json.loads(a['evidence'])
+                        except:
+                            a['evidence'] = {}
+                    if not a.get('severity'):
+                        ev = a.get('evidence', {})
+                        if isinstance(ev, dict) and 'severity' in ev:
+                            a['severity'] = ev['severity']
+                        else:
+                            conf = a.get('confidence', 0.5)
+                            a['severity'] = 'high' if conf > 0.8 else 'medium' if conf > 0.5 else 'low'
+                
+                if not anomalies:
+                    _analysis_jobs[job_id] = {"status": "completed", "progress": "Done", "result": {"status": "no_data", "message": "No anomalies with hypotheses found"}, "error": None}
+                    return
+                
+                report_gen = ReportGenerator()
+                report_result = await report_gen.execute({
+                    "anomalies": anomalies,
+                    "hypotheses": [{"tag_id": a["tag_id"], "root_cause": a.get("hypothesis", ""), "recommended_action": a.get("recommended_action", ""), "confidence": float(a.get("confidence") or 0), "anomaly_id": a.get("id"), "alternative_causes": [], "pharma_impact": ""} for a in anomalies]
+                })
+                
+                _analysis_jobs[job_id] = {
+                    "status": "completed",
+                    "progress": "Done",
+                    "result": {
+                        "status": "success",
+                        "reports": {
+                            "pdf": report_result["pdf_path"],
+                            "html": report_result["html_path"],
+                            "json": report_result["json_path"]
+                        }
+                    },
+                    "error": None
                 }
-            }
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            _analysis_jobs[job_id] = {"status": "failed", "progress": "Failed", "result": None, "error": str(e)}
+    
+    asyncio.create_task(_run())
+    return {"job_id": job_id, "status": "started"}
 
 
 @app.get("/reports/download/{report_type}")

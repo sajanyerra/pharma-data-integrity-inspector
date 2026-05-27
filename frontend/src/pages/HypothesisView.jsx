@@ -12,35 +12,50 @@ export default function HypothesisView() {
   const [generating, setGenerating] = useState(false)
   const navigate = useNavigate()
 
-  useEffect(() => {
-    const fetchHypotheses = async () => {
-      try {
-        const r = await axios.get(`${API_BASE}/anomalies`)
-        const withH = r.data.filter(a => a.hypothesis)
-        if (withH.length > 0) {
-          setHypotheses(withH.map(a => ({
-            anomaly_id: a.id,
-            tag_id: a.tag_id,
-            anomaly_type: a.anomaly_type,
-            root_cause: a.hypothesis,
-            confidence: a.confidence,
-            recommended_action: a.recommended_action || '',
-            alternative_causes: [],
-            pharma_impact: '',
-          })))
-        }
-        setLoading(false)
-      } catch { setLoading(false) }
-    }
-    fetchHypotheses()
-  }, [])
+  const fetchHypotheses = async () => {
+    try {
+      const r = await axios.get(`${API_BASE}/anomalies`)
+      const withH = r.data.filter(a => a.hypothesis)
+      if (withH.length > 0) {
+        setHypotheses(withH.map(a => ({
+          anomaly_id: a.id,
+          tag_id: a.tag_id,
+          anomaly_type: a.anomaly_type,
+          root_cause: a.hypothesis,
+          confidence: a.confidence,
+          recommended_action: a.recommended_action || '',
+          alternative_causes: [],
+          pharma_impact: '',
+        })))
+      }
+      setLoading(false)
+    } catch { setLoading(false) }
+  }
+
+  useEffect(() => { fetchHypotheses() }, [])
 
   const generateHypotheses = async () => {
     setGenerating(true)
     try {
-      const r = await axios.post(`${API_BASE}/generate-hypotheses`)
-      if (r.data.status === 'success') setHypotheses(r.data.hypotheses)
-    } catch {} finally { setGenerating(false) }
+      const startRes = await axios.post(`${API_BASE}/generate-hypotheses`)
+      const jobId = startRes.data.job_id
+      const poll = setInterval(async () => {
+        try {
+          const statusRes = await axios.get(`${API_BASE}/analyze/status/${jobId}`)
+          const { status, result, error } = statusRes.data
+          if (status === 'completed') {
+            clearInterval(poll)
+            setGenerating(false)
+            if (result && result.hypotheses) setHypotheses(result.hypotheses)
+            else await fetchHypotheses()
+          } else if (status === 'failed') {
+            clearInterval(poll)
+            setGenerating(false)
+            alert('Hypothesis generation failed: ' + (error || 'Unknown error'))
+          }
+        } catch { clearInterval(poll); setGenerating(false) }
+      }, 3000)
+    } catch { setGenerating(false) }
   }
 
   if (loading) {

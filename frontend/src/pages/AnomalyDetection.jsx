@@ -62,9 +62,27 @@ export default function AnomalyDetection() {
   const runAnalysis = async () => {
     setRunningAnalysis(true)
     try {
-      await axios.post(`${API_BASE}/analyze`, { hours: 24 })
-      await fetchAnomalies()
-    } catch {} finally { setRunningAnalysis(false) }
+      const startRes = await axios.post(`${API_BASE}/analyze`, { hours: 24 })
+      const jobId = startRes.data.job_id
+      const poll = setInterval(async () => {
+        try {
+          const statusRes = await axios.get(`${API_BASE}/analyze/status/${jobId}`)
+          const { status, progress, result, error } = statusRes.data
+          if (status === 'completed') {
+            clearInterval(poll)
+            setRunningAnalysis(false)
+            await fetchAnomalies()
+            if (result && result.anomalies_detected === 0) {
+              alert('Analysis complete — no anomalies detected.')
+            }
+          } else if (status === 'failed') {
+            clearInterval(poll)
+            setRunningAnalysis(false)
+            alert('Analysis failed: ' + (error || 'Unknown error'))
+          }
+        } catch { clearInterval(poll); setRunningAnalysis(false) }
+      }, 3000)
+    } catch { setRunningAnalysis(false) }
   }
 
   const filteredAnomalies = filter === 'all' ? anomalies : anomalies.filter(a => a.severity === filter)

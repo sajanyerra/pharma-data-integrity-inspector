@@ -15,12 +15,27 @@ export default function ReportPreview() {
   const generateReports = async () => {
     setGenerating(true)
     try {
-      const r = await axios.post(`${API_BASE}/generate-reports`)
-      if (r.data.status === 'success') {
-        setReports(r.data.reports)
-        setGenerated(true)
-      }
-    } catch {} finally { setGenerating(false) }
+      const startRes = await axios.post(`${API_BASE}/generate-reports`)
+      const jobId = startRes.data.job_id
+      const poll = setInterval(async () => {
+        try {
+          const statusRes = await axios.get(`${API_BASE}/analyze/status/${jobId}`)
+          const { status, result, error } = statusRes.data
+          if (status === 'completed') {
+            clearInterval(poll)
+            setGenerating(false)
+            if (result && result.reports) {
+              setReports(result.reports)
+              setGenerated(true)
+            }
+          } else if (status === 'failed') {
+            clearInterval(poll)
+            setGenerating(false)
+            alert('Report generation failed: ' + (error || 'Unknown error'))
+          }
+        } catch { clearInterval(poll); setGenerating(false) }
+      }, 3000)
+    } catch { setGenerating(false) }
   }
 
   const downloadReport = async (type) => {
