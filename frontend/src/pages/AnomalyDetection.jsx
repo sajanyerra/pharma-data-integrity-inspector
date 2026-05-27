@@ -14,17 +14,15 @@ const SEVERITY_CONFIG = {
 }
 
 const CHECKS = [
-  { name: 'Sensor Drift', desc: 'Gradual deviation from baseline over time' },
-  { name: 'Stuck Values', desc: 'Tag value unchanged for too long' },
+  { name: 'Sensor Drift', desc: 'Gradual deviation from baseline (>1%/hr drift rate)' },
+  { name: 'Stuck Values', desc: 'Tag value unchanged for an unusual period (<3 unique values)' },
   { name: 'Impossible Readings', desc: 'Outside physical limits (e.g., negative pressure)' },
-  { name: 'Rate of Change', desc: 'Value changed faster than process allows' },
-  { name: 'Noise Burst', desc: 'Variance spike far above normal baseline' },
-  { name: 'Correlation Break', desc: 'Related tags no longer moving together' },
-  { name: 'CIP Issues', desc: 'Clean-in-place temp/flow outside protocol' },
-  { name: 'FDA Audit Trail', desc: 'Same user in manufacturing + QA roles' },
   { name: 'Rate of Change', desc: 'Value changed faster than process physics allow' },
-  { name: 'Cross-Sensor Corroboration', desc: 'Sensor contradicts correlated witnesses', novel: true },
-  { name: 'Quality Code Mismatch', desc: 'SCADA quality flag disagrees with data' },
+  { name: 'Noise Burst', desc: 'Variance spike >5x normal baseline' },
+  { name: 'Correlation Break', desc: 'Related tags no longer moving together (r shift >0.8)' },
+  { name: 'CIP Issues', desc: 'Clean-in-place temperature below protocol threshold' },
+  { name: 'FDA Audit Trail', desc: 'Quality code pattern indicates compliance concern' },
+  { name: 'Cross-Sensor Corroboration', desc: 'Sensor contradicts correlated witnesses — plausible but WRONG', novel: true },
 ]
 
 const HUMAN_REASONS = {
@@ -124,7 +122,7 @@ export default function AnomalyDetection() {
         <div className="flex items-center gap-3">
           <button onClick={runAnalysis} disabled={runningAnalysis} className="btn-primary flex items-center gap-2">
             <RefreshCw className={`w-4 h-4 ${runningAnalysis ? 'animate-spin' : ''}`} />
-            {runningAnalysis ? 'Analyzing (~30s)...' : 'Run Analysis'}
+            {runningAnalysis ? 'Analyzing (~8s)...' : 'Run Analysis'}
           </button>
           <button onClick={async () => { try { await axios.delete(`${API_BASE}/anomalies/clear`); await fetchAnomalies() } catch {} }} className="btn-secondary flex items-center gap-2">
             <Trash className="w-4 h-4" />Clear
@@ -140,7 +138,7 @@ export default function AnomalyDetection() {
       {/* 10 Checks Grid */}
       <div className="card p-4">
         <button onClick={() => setShowChecks(!showChecks)} className="flex items-center justify-between w-full text-left">
-          <span className="text-sm font-semibold text-foreground">11 Data Integrity Checks</span>
+          <span className="text-sm font-semibold text-foreground">9 Data Integrity Checks</span>
           <ChevronRight className={`w-4 h-4 text-muted-foreground transition-transform ${showChecks ? 'rotate-90' : ''}`} />
         </button>
         {showChecks && (

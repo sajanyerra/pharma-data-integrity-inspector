@@ -63,7 +63,7 @@ export default function Dashboard({ liveTags = [] }) {
         <div className="flex items-start justify-between gap-6">
           <div className="max-w-lg">
             <h1 className="text-2xl font-bold">Pharma Data Integrity Inspector</h1>
-            <p className="text-slate-300 mt-2 text-sm">4 AI agents monitor your pharma sensors — including Cross-Sensor Corroboration that catches sensors no historian can.</p>
+            <p className="text-slate-300 mt-2 text-sm">3 AI agents monitor your pharma sensors — including Cross-Sensor Corroboration that catches sensors no historian can.</p>
             <div className="flex items-center gap-3 mt-4">
               {nextStep ? (
                 <button onClick={() => navigate(nextStep)} className="flex items-center gap-2 bg-white text-slate-800 px-5 py-2.5 rounded-lg font-semibold hover:bg-slate-100 transition-colors shadow-lg">
