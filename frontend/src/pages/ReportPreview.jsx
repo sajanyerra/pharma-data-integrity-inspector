@@ -17,7 +17,11 @@ export default function ReportPreview() {
     try {
       const startRes = await axios.post(`${API_BASE}/generate-reports`)
       const jobId = startRes.data.job_id
+      if (!jobId) { setGenerating(false); alert('Failed to start report generation.'); return }
+      let pollAttempts = 0
       const poll = setInterval(async () => {
+        pollAttempts++
+        if (pollAttempts > 60) { clearInterval(poll); setGenerating(false); alert('Timed out.'); return }
         try {
           const statusRes = await axios.get(`${API_BASE}/analyze/status/${jobId}`)
           const { status, result, error } = statusRes.data
@@ -33,9 +37,9 @@ export default function ReportPreview() {
             setGenerating(false)
             alert('Report generation failed: ' + (error || 'Unknown error'))
           }
-        } catch { clearInterval(poll); setGenerating(false) }
+        } catch (err) { clearInterval(poll); setGenerating(false); alert('Polling error: ' + (err.message || 'Network error')) }
       }, 3000)
-    } catch { setGenerating(false) }
+    } catch (err) { setGenerating(false); alert('Failed to start: ' + (err.message || 'Network error')) }
   }
 
   const downloadReport = async (type) => {

@@ -64,7 +64,20 @@ export default function AnomalyDetection() {
     try {
       const startRes = await axios.post(`${API_BASE}/analyze`, { hours: 24 })
       const jobId = startRes.data.job_id
+      if (!jobId) {
+        setRunningAnalysis(false)
+        alert('Analysis failed to start — no job ID returned.')
+        return
+      }
+      let pollAttempts = 0
       const poll = setInterval(async () => {
+        pollAttempts++
+        if (pollAttempts > 60) {
+          clearInterval(poll)
+          setRunningAnalysis(false)
+          alert('Analysis timed out. Please try again.')
+          return
+        }
         try {
           const statusRes = await axios.get(`${API_BASE}/analyze/status/${jobId}`)
           const { status, progress, result, error } = statusRes.data
@@ -80,9 +93,16 @@ export default function AnomalyDetection() {
             setRunningAnalysis(false)
             alert('Analysis failed: ' + (error || 'Unknown error'))
           }
-        } catch { clearInterval(poll); setRunningAnalysis(false) }
+        } catch (err) {
+          clearInterval(poll)
+          setRunningAnalysis(false)
+          alert('Polling error: ' + (err.message || 'Network error'))
+        }
       }, 3000)
-    } catch { setRunningAnalysis(false) }
+    } catch (err) {
+      setRunningAnalysis(false)
+      alert('Failed to start analysis: ' + (err.message || 'Network error'))
+    }
   }
 
   const filteredAnomalies = filter === 'all' ? anomalies : anomalies.filter(a => a.severity === filter)
