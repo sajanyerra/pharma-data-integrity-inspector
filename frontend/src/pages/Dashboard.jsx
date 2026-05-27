@@ -36,7 +36,7 @@ export default function Dashboard() {
         const r = await axios.get(`${API_BASE}/tags/live`)
         setTags(r.data)
         setLoading(false)
-      } catch { setLoading(false) }
+      } catch { /* keep existing tags on error */ }
     }
 
     const fetchState = async () => {
@@ -218,7 +218,7 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-          {loading ? (
+          {loading && tags.length === 0 ? (
             Array(12).fill(0).map((_, i) => (
               <div key={i} className="card p-3 animate-pulse"><div className="h-4 bg-secondary rounded w-3/4 mb-2" /><div className="h-6 bg-secondary rounded w-1/2" /></div>
             ))
