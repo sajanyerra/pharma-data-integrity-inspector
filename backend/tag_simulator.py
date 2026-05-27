@@ -3,7 +3,7 @@ Pharma Tag Simulator
 Generates realistic sensor data for 20 pharma process tags with:
 - Cross-tag causal correlations (physics-based coupling)
 - Autocorrelation (AR(1) model for temporal smoothness)
-- Injected anomalies: sensor drift, stuck value, and SILENT LIE
+- Randomly injected anomalies (2-4 per run from a diverse pool)
 """
 
 import random
@@ -41,87 +41,44 @@ class TagSimulator:
         'Reactor R-101': {
             'tags': ['TI-101', 'PI-101', 'FI-101', 'LI-101'],
             'couplings': {
-                'TI-101->PI-101': {
-                    'coeff': 0.05,
-                    'desc': 'Clausius-Clapeyron: higher reactor temp -> higher vapor pressure',
-                },
-                'FI-101->LI-101': {
-                    'coeff': 0.15,
-                    'desc': 'Feed flow raises reactor level over time',
-                },
-                'TI-101->FI-201': {
-                    'coeff': -0.8,
-                    'desc': 'Higher reactor temp -> cooling system compensates with more flow',
-                },
+                'TI-101->PI-101': {'coeff': 0.05, 'desc': 'Clausius-Clapeyron: higher reactor temp -> higher vapor pressure'},
+                'FI-101->LI-101': {'coeff': 0.15, 'desc': 'Feed flow raises reactor level over time'},
+                'TI-101->FI-201': {'coeff': -0.8, 'desc': 'Higher reactor temp -> cooling system compensates with more flow'},
             },
         },
         'HX-201': {
             'tags': ['TI-201', 'FI-201', 'TI-202'],
             'couplings': {
-                'TI-201->TI-202': {
-                    'coeff': 0.9,
-                    'desc': 'Cold side outlet tracks hot side inlet via heat transfer',
-                },
-                'FI-201->TI-202': {
-                    'coeff': -0.01,
-                    'desc': 'More cooling water -> lower HX outlet temp',
-                },
+                'TI-201->TI-202': {'coeff': 0.9, 'desc': 'Cold side outlet tracks hot side inlet via heat transfer'},
+                'FI-201->TI-202': {'coeff': -0.01, 'desc': 'More cooling water -> lower HX outlet temp'},
             },
         },
         'Pump P-301': {
             'tags': ['PI-301', 'FI-301', 'VI-301'],
             'couplings': {
-                'PI-301->FI-301': {
-                    'coeff': 20.0,
-                    'desc': 'Pump curve: higher discharge pressure relates to flow',
-                },
-                'FI-301->VI-301': {
-                    'coeff': 0.01,
-                    'desc': 'Vibration increases with flow rate',
-                },
+                'PI-301->FI-301': {'coeff': 20.0, 'desc': 'Pump curve: higher discharge pressure relates to flow'},
+                'FI-301->VI-301': {'coeff': 0.01, 'desc': 'Vibration increases with flow rate'},
             },
         },
         'Comp C-501': {
             'tags': ['TI-501', 'PI-501', 'PI-502'],
             'couplings': {
-                'PI-501->PI-502': {
-                    'coeff': 3.0,
-                    'desc': 'Compressor ratio: suction pressure drives discharge',
-                },
-                'PI-501->TI-501': {
-                    'coeff': 25.0,
-                    'desc': 'Compression: higher suction pressure -> higher discharge temp',
-                },
+                'PI-501->PI-502': {'coeff': 3.0, 'desc': 'Compressor ratio: suction pressure drives discharge'},
+                'PI-501->TI-501': {'coeff': 25.0, 'desc': 'Compression: higher suction pressure -> higher discharge temp'},
             },
         },
         'CIP System': {
             'tags': ['TI-601', 'FI-601', 'CI-601'],
             'couplings': {
-                'FI-601->TI-601': {
-                    'coeff': 0.005,
-                    'desc': 'Higher CIP flow -> better heat delivery -> higher supply temp',
-                },
-                'TI-601->CI-601': {
-                    'coeff': 0.5,
-                    'desc': 'Higher CIP temp improves chemical effectiveness (conductivity proxy)',
-                },
+                'FI-601->TI-601': {'coeff': 0.005, 'desc': 'Higher CIP flow -> better heat delivery -> higher supply temp'},
+                'TI-601->CI-601': {'coeff': 0.5, 'desc': 'Higher CIP temp improves chemical effectiveness (conductivity proxy)'},
             },
         },
     }
 
     CROSS_GROUP_COUPLINGS = {
-        'TI-101->FI-201': {
-            'coeff': -0.8,
-            'desc': 'Reactor temp rise -> cooling system compensates',
-            'source_group': 'Reactor R-101',
-            'target_group': 'HX-201',
-        },
-        'LI-101->FI-301': {
-            'coeff': 3.0,
-            'desc': 'Reactor level drives pump demand',
-            'source_group': 'Reactor R-101',
-            'target_group': 'Pump P-301',
-        },
+        'TI-101->FI-201': {'coeff': -0.8, 'desc': 'Reactor temp rise -> cooling system compensates', 'source_group': 'Reactor R-101', 'target_group': 'HX-201'},
+        'LI-101->FI-301': {'coeff': 3.0, 'desc': 'Reactor level drives pump demand', 'source_group': 'Reactor R-101', 'target_group': 'Pump P-301'},
     }
 
     CORRELATED_PAIRS = [
@@ -134,40 +91,146 @@ class TagSimulator:
         ('VI-301', 'FI-301'),
     ]
 
-    ANOMALIES = {
+    CROSS_SENSOR_WITNESSES = {
         'TI-101': {
-            'type': 'sensor_drift',
-            'start_hour': 14,
-            'start_minute': 32,
-            'duration_hours': 18,
-            'drift_rate': 2.5,
+            'witnesses': ['PI-101', 'FI-201', 'LI-101'],
+            'relationships': {
+                'PI-101': {'coeff': 0.05, 'direction': 'same', 'desc': 'Higher reactor temp -> higher vapor pressure (Clausius-Clapeyron)'},
+                'FI-201': {'coeff': -0.8, 'direction': 'opposite', 'desc': 'Higher reactor temp -> cooling system increases flow'},
+                'LI-101': {'coeff': 0.15, 'direction': 'same', 'desc': 'Temperature affects reaction rate which changes feed consumption'},
+            },
+        },
+        'PI-101': {
+            'witnesses': ['TI-101', 'FI-101'],
+            'relationships': {
+                'TI-101': {'coeff': 0.05, 'direction': 'same', 'desc': 'Clausius-Clapeyron: higher temp -> higher pressure'},
+                'FI-101': {'coeff': 0.5, 'direction': 'same', 'desc': 'Higher feed flow -> higher reactor pressure'},
+            },
+        },
+        'FI-201': {
+            'witnesses': ['TI-101', 'TI-202'],
+            'relationships': {
+                'TI-101': {'coeff': -0.8, 'direction': 'opposite', 'desc': 'Higher reactor temp -> more cooling flow needed'},
+                'TI-202': {'coeff': -0.01, 'direction': 'opposite', 'desc': 'More cooling water -> lower HX outlet temp'},
+            },
         },
         'VI-301': {
-            'type': 'stuck_value',
-            'start_hour': 3,
-            'start_minute': 15,
-            'duration_hours': 6,
-            'stuck_value': 4.2,
+            'witnesses': ['PI-301', 'FI-301'],
+            'relationships': {
+                'PI-301': {'coeff': 0.08, 'direction': 'same', 'desc': 'Higher pump pressure -> more vibration'},
+                'FI-301': {'coeff': 0.01, 'direction': 'same', 'desc': 'Higher flow -> more vibration'},
+            },
+        },
+        'TI-202': {
+            'witnesses': ['TI-201', 'FI-201'],
+            'relationships': {
+                'TI-201': {'coeff': 0.9, 'direction': 'same', 'desc': 'HX outlet tracks inlet via heat transfer'},
+                'FI-201': {'coeff': -0.01, 'direction': 'opposite', 'desc': 'More cooling flow -> lower outlet temp'},
+            },
+        },
+        'PI-502': {
+            'witnesses': ['PI-501', 'TI-501'],
+            'relationships': {
+                'PI-501': {'coeff': 3.0, 'direction': 'same', 'desc': 'Discharge pressure tracks suction via compressor ratio'},
+                'TI-501': {'coeff': 0.1, 'direction': 'same', 'desc': 'Higher compression -> higher discharge temp'},
+            },
+        },
+        'LI-101': {
+            'witnesses': ['FI-101', 'TI-101'],
+            'relationships': {
+                'FI-101': {'coeff': 0.15, 'direction': 'same', 'desc': 'Feed flow raises reactor level'},
+                'TI-101': {'coeff': 0.02, 'direction': 'same', 'desc': 'Temperature affects density and apparent level'},
+            },
+        },
+        'TI-601': {
+            'witnesses': ['FI-601', 'CI-601'],
+            'relationships': {
+                'FI-601': {'coeff': 0.005, 'direction': 'same', 'desc': 'Higher CIP flow -> higher supply temp'},
+                'CI-601': {'coeff': 0.5, 'direction': 'same', 'desc': 'Higher temp -> higher conductivity'},
+            },
         },
     }
 
-    SILENT_LIE = {
-        'tag_id': 'TI-101',
-        'type': 'silent_lie',
-        'start_hour': 10,
-        'start_minute': 0,
-        'duration_hours': 4,
-        'offset': -3.0,
-        'desc': 'TI-101 miscalibrated: reports 3 deg C LOW. Correlated sensors (PI-101, FI-201, LI-101) contradict the reading.',
-    }
+    ANOMALY_TEMPLATES = [
+        {'type': 'sensor_drift', 'tags': ['TI-101', 'PI-101', 'FI-101', 'TI-201', 'TI-202', 'TI-401', 'TI-501', 'TI-601', 'PI-301'], 'params': {'drift_rate_range': (1.0, 5.0)}},
+        {'type': 'stuck_value', 'tags': ['VI-301', 'PI-401', 'FI-301', 'FI-101', 'FI-201', 'LI-101', 'AI-901', 'CI-601'], 'params': {'duration_range': (2, 8)}},
+        {'type': 'spike', 'tags': ['TI-101', 'PI-101', 'FI-201', 'PI-501', 'PI-502', 'VI-301', 'AI-901'], 'params': {'multiplier_range': (3, 8), 'duration_points_range': (1, 3)}},
+        {'type': 'noise_burst', 'tags': ['TI-201', 'FI-101', 'VI-301', 'LI-401', 'AI-901', 'PI-401'], 'params': {'noise_multiplier_range': (3, 8), 'duration_range_hours': (1, 4)}},
+        {'type': 'silent_lie', 'tags': ['TI-101', 'TI-201', 'PI-101', 'LI-101', 'FI-201'], 'params': {'offset_fraction_range': (0.02, 0.06), 'duration_range': (2, 6)}},
+        {'type': 'sensor_drift', 'tags': ['PI-502', 'FI-601', 'FI-301', 'PI-501'], 'params': {'drift_rate_range': (0.005, 0.02)}},
+    ]
 
     def __init__(self, seed: int = None, start_time: datetime = None):
+        self.rng = random.Random(seed)
         if seed is not None:
             random.seed(seed)
         self.start_time = start_time or datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         self._prev_values: Dict[str, float] = {}
         self._deviations: Dict[str, float] = {}
         self.ar_coeff = 0.85
+        self.active_anomalies: Dict[str, Dict] = {}
+        self._generate_random_anomalies()
+
+    def _generate_random_anomalies(self):
+        num_anomalies = self.rng.randint(2, 4)
+        used_tags = set()
+        chosen = []
+
+        candidates = list(self.ANOMALY_TEMPLATES)
+        self.rng.shuffle(candidates)
+
+        for template in candidates:
+            if len(chosen) >= num_anomalies:
+                break
+            available_tags = [t for t in template['tags'] if t not in used_tags]
+            if not available_tags:
+                continue
+            tag = self.rng.choice(available_tags)
+            used_tags.add(tag)
+            config = self.TAG_CONFIGS[tag]
+            anomaly = {'type': template['type'], 'tag': tag}
+
+            start_hour = self.rng.randint(1, 16)
+            start_minute = self.rng.randint(0, 59)
+
+            if template['type'] == 'sensor_drift':
+                drift_range = template['params']['drift_rate_range']
+                anomaly['start_hour'] = start_hour
+                anomaly['start_minute'] = start_minute
+                anomaly['duration_hours'] = self.rng.randint(4, min(10, 24 - start_hour - 1))
+                anomaly['drift_rate'] = self.rng.uniform(*drift_range)
+                if config['data_type'] in ('Pressure', 'Flow', 'Level', 'Conductivity'):
+                    anomaly['drift_rate'] *= config['base'] * 0.01
+
+            elif template['type'] == 'stuck_value':
+                anomaly['start_hour'] = start_hour
+                anomaly['start_minute'] = start_minute
+                anomaly['duration_hours'] = self.rng.randint(*template['params']['duration_range'])
+                anomaly['stuck_value'] = round(config['base'] + self.rng.uniform(-config['noise'], config['noise']), 3)
+
+            elif template['type'] == 'spike':
+                anomaly['start_hour'] = start_hour
+                anomaly['start_minute'] = start_minute
+                anomaly['spike_multiplier'] = self.rng.uniform(*template['params']['multiplier_range'])
+                anomaly['spike_points'] = self.rng.randint(*template['params']['duration_points_range'])
+
+            elif template['type'] == 'noise_burst':
+                anomaly['start_hour'] = start_hour
+                anomaly['start_minute'] = start_minute
+                anomaly['duration_hours'] = self.rng.uniform(*template['params']['duration_range_hours'])
+                anomaly['noise_multiplier'] = self.rng.uniform(*template['params']['noise_multiplier_range'])
+
+            elif template['type'] == 'silent_lie':
+                anomaly['start_hour'] = start_hour
+                anomaly['start_minute'] = start_minute
+                anomaly['duration_hours'] = self.rng.randint(*template['params']['duration_range'])
+                offset_fraction = self.rng.uniform(*template['params']['offset_fraction_range'])
+                anomaly['offset'] = round(-config['base'] * offset_fraction, 3)
+                if config['data_type'] == 'Temperature':
+                    anomaly['offset'] = round(-self.rng.uniform(2, 5), 3)
+
+            chosen.append(anomaly)
+            self.active_anomalies[tag] = anomaly
 
     def _get_noise(self, noise_level: float) -> float:
         return random.gauss(0, noise_level)
@@ -195,70 +258,53 @@ class TagSimulator:
             if not config:
                 deviations[tag_id] = dev
                 continue
-            max_dev = abs(config['base'] - config['normal_min']) if config.get('normal_min') else abs(config['base'] * 0.3)
+            max_dev = abs(config['base'] - config.get('normal_min', config['base'] - config['base'] * 0.3))
             max_allowed = max(max_dev, config['noise'] * 10)
             deviations[tag_id] = max(-max_allowed, min(max_allowed, dev))
 
         return deviations
 
-    def _calculate_drift(self, tag_id: str, current_time: datetime) -> float:
-        if tag_id not in self.ANOMALIES:
-            return 0.0
-        anomaly = self.ANOMALIES[tag_id]
-        if anomaly['type'] != 'sensor_drift':
-            return 0.0
+    def _apply_anomaly(self, tag_id: str, timestamp: datetime, value: float, config: Dict) -> tuple:
+        anomaly = self.active_anomalies.get(tag_id)
+        if not anomaly:
+            return value, None
+
         anomaly_start = self.start_time.replace(hour=anomaly['start_hour'], minute=anomaly['start_minute'])
         anomaly_end = anomaly_start + timedelta(hours=anomaly['duration_hours'])
-        if anomaly_start <= current_time <= anomaly_end:
-            hours_elapsed = (current_time - anomaly_start).total_seconds() / 3600
-            return hours_elapsed * anomaly['drift_rate']
-        return 0.0
 
-    def _is_stuck(self, tag_id: str, current_time: datetime) -> tuple:
-        if tag_id not in self.ANOMALIES:
-            return False, 0.0
-        anomaly = self.ANOMALIES[tag_id]
-        if anomaly['type'] != 'stuck_value':
-            return False, 0.0
-        anomaly_start = self.start_time.replace(hour=anomaly['start_hour'], minute=anomaly['start_minute'])
-        anomaly_end = anomaly_start + timedelta(hours=anomaly['duration_hours'])
-        if anomaly_start <= current_time <= anomaly_end:
-            return True, anomaly['stuck_value']
-        return False, 0.0
+        if not (anomaly_start <= timestamp <= anomaly_end):
+            return value, None
 
-    def _get_silent_lie_offset(self, tag_id: str, current_time: datetime) -> float:
-        if self.SILENT_LIE['tag_id'] != tag_id:
-            return 0.0
-        lie = self.SILENT_LIE
-        anomaly_start = self.start_time.replace(hour=lie['start_hour'], minute=lie['start_minute'])
-        anomaly_end = anomaly_start + timedelta(hours=lie['duration_hours'])
-        if anomaly_start <= current_time <= anomaly_end:
-            return lie['offset']
-        return 0.0
+        if anomaly['type'] == 'sensor_drift':
+            hours_elapsed = (timestamp - anomaly_start).total_seconds() / 3600
+            drift = hours_elapsed * anomaly['drift_rate']
+            return value + drift, 'sensor_drift'
 
-    def _is_silent_lie_active(self, current_time: datetime) -> bool:
-        lie = self.SILENT_LIE
-        anomaly_start = self.start_time.replace(hour=lie['start_hour'], minute=lie['start_minute'])
-        anomaly_end = anomaly_start + timedelta(hours=lie['duration_hours'])
-        return anomaly_start <= current_time <= anomaly_end
+        elif anomaly['type'] == 'stuck_value':
+            return anomaly['stuck_value'], 'stuck_value'
+
+        elif anomaly['type'] == 'spike':
+            spike_points = anomaly.get('spike_points', 1)
+            seconds_into_anomaly = (timestamp - anomaly_start).total_seconds()
+            interval = 30
+            local_index = int(seconds_into_anomaly / interval) % max(spike_points * 10, 1)
+            if local_index < spike_points:
+                return value + config['noise'] * anomaly['spike_multiplier'], 'spike'
+            return value, None
+
+        elif anomaly['type'] == 'noise_burst':
+            burst_noise = random.gauss(0, config['noise'] * anomaly['noise_multiplier'])
+            return value + burst_noise, 'noise_burst'
+
+        elif anomaly['type'] == 'silent_lie':
+            return value + anomaly['offset'], 'silent_lie'
+
+        return value, None
 
     def generate_value(self, tag_id: str, timestamp: datetime) -> Dict[str, Any]:
         if tag_id not in self.TAG_CONFIGS:
             raise ValueError(f"Unknown tag: {tag_id}")
         config = self.TAG_CONFIGS[tag_id]
-
-        is_stuck, stuck_value = self._is_stuck(tag_id, timestamp)
-        if is_stuck:
-            self._prev_values[tag_id] = stuck_value
-            return {
-                'tag_id': tag_id,
-                'timestamp': timestamp,
-                'value': stuck_value,
-                'quality_code': 'Good',
-                'unit': config['unit'],
-                'is_anomaly': True,
-                'anomaly_type': 'stuck_value'
-            }
 
         noise = self._get_noise(config['noise'])
         causal_dev = self._deviations.get(tag_id, 0.0)
@@ -268,30 +314,18 @@ class TagSimulator:
         natural_value = config['base'] + causal_dev + hour_variation + noise
         true_value = self.ar_coeff * prev + (1 - self.ar_coeff) * natural_value
 
-        drift = self._calculate_drift(tag_id, timestamp)
-        if drift != 0:
-            true_value += drift
+        true_value, anomaly_type = self._apply_anomaly(tag_id, timestamp, true_value, config)
 
         self._prev_values[tag_id] = true_value
-
         reported_value = round(true_value, 3)
 
-        silent_lie_offset = self._get_silent_lie_offset(tag_id, timestamp)
-        if silent_lie_offset != 0:
-            reported_value = round(true_value + silent_lie_offset, 3)
+        is_anomaly = anomaly_type is not None
 
         quality_code = 'Good'
         if random.random() < 0.02:
             quality_code = 'Warning'
         if random.random() < 0.005:
             quality_code = 'Bad'
-
-        is_anomaly = drift != 0 or silent_lie_offset != 0
-        anomaly_type = None
-        if drift != 0:
-            anomaly_type = 'sensor_drift'
-        elif silent_lie_offset != 0:
-            anomaly_type = 'silent_lie'
 
         return {
             'tag_id': tag_id,
@@ -342,7 +376,7 @@ class TagSimulator:
                 'data_type': data_type,
                 'normal_min': min_val,
                 'normal_max': max_val,
-                'scan_rate_sec': 5,
+                'scan_rate_sec': 30,
                 'description': desc
             })
         return metadata
@@ -370,25 +404,18 @@ class TagSimulator:
         return result
 
     def get_silent_lie_config(self) -> Dict:
-        return dict(self.SILENT_LIE)
+        for tag_id, anomaly in self.active_anomalies.items():
+            if anomaly['type'] == 'silent_lie':
+                return {'tag_id': tag_id, **anomaly}
+        return {}
+
+    def get_active_anomalies(self) -> List[Dict]:
+        return [{'tag_id': tag, **anomaly} for tag, anomaly in self.active_anomalies.items()]
 
 
 if __name__ == '__main__':
-    simulator = TagSimulator(seed=42)
-
-    test_time = datetime.now()
-    readings = simulator.generate_all_tags(test_time)
-    print(f"Generated {len(readings)} tag readings at {test_time}")
-    for reading in readings[:5]:
-        print(f"  {reading['tag_id']}: {reading['value']} {reading['unit']} ({reading['quality_code']})")
-
-    lie_time = datetime.now().replace(hour=11, minute=0)
-    simulator2 = TagSimulator(seed=42)
-    readings2 = simulator2.generate_all_tags(lie_time)
-    print(f"\nAt {lie_time} (silent lie active for TI-101):")
-    for r in readings2:
-        if r['tag_id'] in ['TI-101', 'PI-101', 'FI-201', 'LI-101']:
-            print(f"  {r['tag_id']}: {r['value']} {r['unit']} (anomaly: {r.get('anomaly_type', 'none')})")
-
-    print(f"\nSilent lie config: {simulator.get_silent_lie_config()}")
-    print(f"Causal groups: {list(simulator.get_causal_groups().keys())}")
+    for seed in [42, 123, 999]:
+        print(f"\n=== Seed {seed} ===")
+        simulator = TagSimulator(seed=seed)
+        for a in simulator.get_active_anomalies():
+            print(f"  {a['tag_id']}: {a['type']} at hour {a['start_hour']}:{a['start_minute']:02d}, duration {a.get('duration_hours', 'N/A')}h")

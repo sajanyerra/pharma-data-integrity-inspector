@@ -18,13 +18,13 @@ const CHECKS = [
   { name: 'Stuck Values', desc: 'Tag value unchanged for too long' },
   { name: 'Impossible Readings', desc: 'Outside physical limits (e.g., negative pressure)' },
   { name: 'Rate of Change', desc: 'Value changed faster than process allows' },
-  { name: 'Quality Code Mismatch', desc: 'SCADA quality flag disagrees with data' },
-  { name: 'Data Gaps', desc: 'Missing readings in time series' },
-  { name: 'Statistical Outliers', desc: 'Z-score > 3 from historical mean' },
+  { name: 'Noise Burst', desc: 'Variance spike far above normal baseline' },
   { name: 'Correlation Break', desc: 'Related tags no longer moving together' },
   { name: 'CIP Issues', desc: 'Clean-in-place temp/flow outside protocol' },
   { name: 'FDA Audit Trail', desc: 'Same user in manufacturing + QA roles' },
+  { name: 'Rate of Change', desc: 'Value changed faster than process physics allow' },
   { name: 'Cross-Sensor Corroboration', desc: 'Sensor contradicts correlated witnesses', novel: true },
+  { name: 'Quality Code Mismatch', desc: 'SCADA quality flag disagrees with data' },
 ]
 
 const HUMAN_REASONS = {
@@ -32,6 +32,7 @@ const HUMAN_REASONS = {
   stuck_value: 'Sensor reading has not changed for an unusual period — possible communication or hardware failure.',
   impossible_reading: 'Reading violates physical limits (e.g., temperature below absolute zero).',
   rate_of_change_violation: 'Value changed faster than the process physics allow — likely a spike or data error.',
+  noise_burst: 'Variance spiked far above baseline — possible electrical interference or sensor malfunction.',
   quality_code_mismatch: 'High outlier ratio despite Good quality codes — the SCADA quality flag may be wrong.',
   data_gap: 'Expected readings are missing from the time series — collection or storage failure.',
   statistical_outlier: 'Value is an extreme statistical outlier (>5 sigma) from the 24-hour baseline.',

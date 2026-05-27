@@ -15,7 +15,7 @@ from config import settings
 
 
 class AnomalyDetector(BaseAgent):
-    """Detects data integrity anomalies using 11 detection algorithms with AI prioritization"""
+    """Detects data integrity anomalies using 8+ detection algorithms with AI prioritization"""
     
     def __init__(self):
         super().__init__("AnomalyDetector")
@@ -36,23 +36,22 @@ class AnomalyDetector(BaseAgent):
             ("VI-301", "FI-301"),
         ]
         
-        self.cross_sensor_groups = {
-            'TI-101': {
-                'witnesses': ['PI-101', 'FI-201', 'LI-101'],
-                'relationships': {
-                    'PI-101': {'coeff': 0.05, 'direction': 'same', 'desc': 'Higher reactor temp -> higher vapor pressure (Clausius-Clapeyron)'},
-                    'FI-201': {'coeff': -0.8, 'direction': 'opposite', 'desc': 'Higher reactor temp -> cooling system increases flow'},
-                    'LI-101': {'coeff': 0.15, 'direction': 'same', 'desc': 'Temperature affects reaction rate which changes feed consumption'},
+        self.cross_sensor_groups = {}
+        try:
+            from tag_simulator import TagSimulator
+            sim = TagSimulator(seed=42)
+            self.cross_sensor_groups = sim.CROSS_SENSOR_WITNESSES
+        except Exception:
+            self.cross_sensor_groups = {
+                'TI-101': {
+                    'witnesses': ['PI-101', 'FI-201', 'LI-101'],
+                    'relationships': {
+                        'PI-101': {'coeff': 0.05, 'direction': 'same', 'desc': 'Higher reactor temp -> higher vapor pressure'},
+                        'FI-201': {'coeff': -0.8, 'direction': 'opposite', 'desc': 'Higher reactor temp -> cooling system increases flow'},
+                        'LI-101': {'coeff': 0.15, 'direction': 'same', 'desc': 'Temperature affects reaction rate'},
+                    },
                 },
-            },
-            'VI-301': {
-                'witnesses': ['PI-301', 'FI-301'],
-                'relationships': {
-                    'PI-301': {'coeff': 0.08, 'direction': 'same', 'desc': 'Higher pump pressure -> more vibration'},
-                    'FI-301': {'coeff': 0.01, 'direction': 'same', 'desc': 'Higher flow -> more vibration'},
-                },
-            },
-        }
+            }
         
         self.physical_limits = {
             "Temperature": {"min": -273.15, "max": 500},
@@ -146,6 +145,10 @@ class AnomalyDetector(BaseAgent):
                 if roc_anomaly:
                     anomalies.append(roc_anomaly)
 
+                noise_anomaly = self._check_noise_burst(tag_id, values_array, profile)
+                if noise_anomaly:
+                    anomalies.append(noise_anomaly)
+
             correlation_anomalies = self._check_correlations_cached(data_cache)
             anomalies.extend(correlation_anomalies)
             print(f"[AnomalyDetector] Correlation anomalies: {len(correlation_anomalies)}")
@@ -183,9 +186,9 @@ class AnomalyDetector(BaseAgent):
             return "No anomalies detected. All sensor data appears within normal parameters."
         
         prompt = PromptTemplate(
-            template="""You are a pharma process engineer reviewing integrity check results from a pharmaceutical plant. These anomalies were detected by the rule engine. Your job: analyze the PATTERN of findings and explain what they mean together.
+            template="""You are a pharma process engineer reviewing integrity check results from a pharmaceutical plant. These anomalies were detected by automated checks. Your job: analyze the PATTERN of findings and explain what they mean together.
 
-Detected anomalies (from 11 checks: sensor drift, stuck values, impossible readings, rate-of-change, quality code mismatch, data gaps, statistical outliers, correlation breakdown, CIP issues, FDA audit trail, CROSS-SENSOR CONSISTENCY/SILENT LIE):
+Detected anomalies (checks include: sensor drift, stuck values, impossible readings, rate-of-change, noise bursts, correlation breakdown, CIP issues, FDA audit trail, CROSS-SENSOR CONSISTENCY):
 {anomaly_summary}
 
 In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which finding is most urgent — especially any cross-sensor inconsistency? (3) Any systemic issue (e.g., network, calibration, operator)?""",
@@ -364,6 +367,47 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
                 },
                 "timestamp": datetime.utcnow().isoformat(),
                 "severity": "high"
+            }
+        return None
+    
+    def _check_noise_burst(self, tag_id: str, values: np.ndarray, profile: Dict) -> Dict:
+        """Check: Noise Burst - Variance spike in a window vs baseline"""
+        n = len(values)
+        if n < 60 or 'std' not in profile:
+            return None
+        
+        interval_sec = 86400.0 / n if n > 0 else 30
+        window_size = max(30, int(1800 / interval_sec))  # 30 min
+        step = max(window_size // 2, 1)
+        
+        baseline_std = profile['std']
+        if baseline_std <= 0:
+            return None
+        
+        max_ratio = 0
+        max_window_start = 0
+        
+        for start in range(0, n - window_size, step):
+            window = values[start:start + window_size]
+            window_std = float(np.std(window))
+            ratio = window_std / baseline_std
+            if ratio > max_ratio:
+                max_ratio = ratio
+                max_window_start = start
+        
+        if max_ratio > 3.0:
+            return {
+                "tag_id": tag_id,
+                "anomaly_type": "noise_burst",
+                "confidence": min(0.85, max_ratio / 10),
+                "evidence": {
+                    "noise_multiplier": round(max_ratio, 2),
+                    "baseline_std": round(baseline_std, 3),
+                    "window_std": round(baseline_std * max_ratio, 3),
+                    "window_start_pct": round(max_window_start / n * 100, 1),
+                },
+                "timestamp": datetime.utcnow().isoformat(),
+                "severity": "medium"
             }
         return None
     
