@@ -310,6 +310,8 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
             return None
         
         diffs = np.diff(values)
+        
+        thresholds = {
             "Temperature": 50,
             "Pressure": 20,
             "Flow": 200,
