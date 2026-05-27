@@ -1,6 +1,6 @@
 """
 Output Guardrail for Pharma Data Integrity Inspector
-Uses Guardrails AI with custom validators for output sanitization.
+Uses Guardrails AI with custom validators when available, falls back to regex.
 """
 
 import re
@@ -13,102 +13,100 @@ try:
     HAS_GUARDRAILS = True
 except ImportError:
     HAS_GUARDRAILS = False
+    Validator = object
+    ValidationResult = None
 
 
-class PIIValidator(Validator):
-    """Redacts PII (SSN, email, phone, IP, names) from text."""
-    risk_type = "pii"
-    pod_manager_type = ""
+_PII_PATTERNS = [
+    (re.compile(r'\b\d{3}[-.]?\d{2}[-.]?\d{4}\b'), '[SSN-REDACTED]'),
+    (re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'), '[EMAIL-REDACTED]'),
+    (re.compile(r'\b\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b'), '[PHONE-REDACTED]'),
+    (re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'), '[IP-REDACTED]'),
+    (re.compile(r'\b(?:Mr|Mrs|Ms|Dr|Prof)\.\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b'), '[NAME-REDACTED]'),
+]
 
-    REDACTION_PATTERNS = [
-        (re.compile(r'\b\d{3}[-.]?\d{2}[-.]?\d{4}\b'), '[SSN-REDACTED]'),
-        (re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'), '[EMAIL-REDACTED]'),
-        (re.compile(r'\b\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b'), '[PHONE-REDACTED]'),
-        (re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'), '[IP-REDACTED]'),
-        (re.compile(r'\b(?:Mr|Mrs|Ms|Dr|Prof)\.\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b'), '[NAME-REDACTED]'),
-    ]
+_PHARMA_PATTERNS = [
+    (re.compile(r'\b[A-Z]{2,3}[-]?\d{5,8}\b'), '[BATCH-REDACTED]'),
+    (re.compile(r'\bLot\s*(?:#|Number|No\.?)?\s*[A-Z0-9-]{4,}\b', re.IGNORECASE), '[LOT-REDACTED]'),
+    (re.compile(r'\bpatient\s+(?:name|id|record|info|data|identifier)\b', re.IGNORECASE), '[PATIENT-REF-REDACTED]'),
+    (re.compile(r'\bformulation\s+(?:recipe|composition|mixture|ratio)\b', re.IGNORECASE), '[FORMULATION-REDACTED]'),
+    (re.compile(r'\bproprietary\s+(?:process|method|formula|blend)\b', re.IGNORECASE), '[PROPRIETARY-REDACTED]'),
+]
 
-    def validate(self, value: Any, metadata: Dict = {}) -> ValidationResult:
-        if not value or not isinstance(value, str):
+_CREDENTIAL_PATTERNS = [
+    (re.compile(r'\bPASS(?:WORD)?\s*[=:]\s*\S+', re.IGNORECASE), '[CREDENTIAL-REDACTED]'),
+    (re.compile(r'\bAPI[_-]?KEY\s*[=:]\s*\S+', re.IGNORECASE), '[CREDENTIAL-REDACTED]'),
+    (re.compile(r'\bSECRET\s*[=:]\s*\S+', re.IGNORECASE), '[CREDENTIAL-REDACTED]'),
+    (re.compile(r'\bTOKEN\s*[=:]\s*\S+', re.IGNORECASE), '[CREDENTIAL-REDACTED]'),
+]
+
+_DANGEROUS_PATTERNS = [
+    re.compile(r'\bbypass\s+(?:the\s+)?(?:audit\s+trail|quality\s+check|security|authentication)\b', re.IGNORECASE),
+    re.compile(r'\bignore\s+(?:the\s+)?(?:FDA|regulation|compliance|validation|SOP)\b', re.IGNORECASE),
+    re.compile(r'\bdelete\s+(?:the\s+)?(?:audit|log|record|trail)\b', re.IGNORECASE),
+    re.compile(r'\bdisable\s+(?:the\s+)?(?:alarm|alert|monitoring|safety)\b', re.IGNORECASE),
+    re.compile(r'\bskip\s+(?:the\s+)?(?:calibration|validation|testing|inspection)\b', re.IGNORECASE),
+    re.compile(r'\baccess\s+(?:restricted|unauthorized|confidential)\b', re.IGNORECASE),
+]
+
+_ALL_REDACTION_PATTERNS = _PII_PATTERNS + _PHARMA_PATTERNS + _CREDENTIAL_PATTERNS
+
+
+if HAS_GUARDRAILS:
+    class PIIValidator(Validator):
+        risk_type = "pii"
+        pod_manager_type = ""
+
+        def validate(self, value: Any, metadata: Dict = {}) -> ValidationResult:
+            if not value or not isinstance(value, str):
+                return ValidationResult(value=value, validation_passed=True)
+            result = value
+            for pattern, replacement in _PII_PATTERNS:
+                result = pattern.sub(replacement, result)
+            return ValidationResult(value=result, validation_passed=(result == value))
+
+    class PharmaSensitiveValidator(Validator):
+        risk_type = "pharma_sensitive"
+        pod_manager_type = ""
+
+        def validate(self, value: Any, metadata: Dict = {}) -> ValidationResult:
+            if not value or not isinstance(value, str):
+                return ValidationResult(value=value, validation_passed=True)
+            result = value
+            for pattern, replacement in _PHARMA_PATTERNS:
+                result = pattern.sub(replacement, result)
+            return ValidationResult(value=result, validation_passed=(result == value))
+
+    class CredentialValidator(Validator):
+        risk_type = "credentials"
+        pod_manager_type = ""
+
+        def validate(self, value: Any, metadata: Dict = {}) -> ValidationResult:
+            if not value or not isinstance(value, str):
+                return ValidationResult(value=value, validation_passed=True)
+            result = value
+            for pattern, replacement in _CREDENTIAL_PATTERNS:
+                result = pattern.sub(replacement, result)
+            return ValidationResult(value=result, validation_passed=(result == value))
+
+    class DangerousRecommendationValidator(Validator):
+        risk_type = "dangerous_recommendation"
+        pod_manager_type = ""
+
+        def validate(self, value: Any, metadata: Dict = {}) -> ValidationResult:
+            if not value or not isinstance(value, str):
+                return ValidationResult(value=value, validation_passed=True)
+            for pattern in _DANGEROUS_PATTERNS:
+                if pattern.search(value):
+                    return ValidationResult(
+                        value="[GUARDRAIL: This recommendation was blocked as it suggests an unsafe action. Please consult your SOP and QA team.]",
+                        validation_passed=False
+                    )
             return ValidationResult(value=value, validation_passed=True)
-        result = value
-        for pattern, replacement in self.REDACTION_PATTERNS:
-            result = pattern.sub(replacement, result)
-        passed = result == value
-        return ValidationResult(value=result, validation_passed=passed)
-
-
-class PharmaSensitiveValidator(Validator):
-    """Redacts pharma-sensitive info (batch numbers, lot numbers, patient refs, formulations)."""
-    risk_type = "pharma_sensitive"
-    pod_manager_type = ""
-
-    PATTERNS = [
-        (re.compile(r'\b[A-Z]{2,3}[-]?\d{5,8}\b'), '[BATCH-REDACTED]'),
-        (re.compile(r'\bLot\s*(?:#|Number|No\.?)?\s*[A-Z0-9-]{4,}\b', re.IGNORECASE), '[LOT-REDACTED]'),
-        (re.compile(r'\bpatient\s+(?:name|id|record|info|data|identifier)\b', re.IGNORECASE), '[PATIENT-REF-REDACTED]'),
-        (re.compile(r'\bformulation\s+(?:recipe|composition|mixture|ratio)\b', re.IGNORECASE), '[FORMULATION-REDACTED]'),
-        (re.compile(r'\bproprietary\s+(?:process|method|formula|blend)\b', re.IGNORECASE), '[PROPRIETARY-REDACTED]'),
-    ]
-
-    def validate(self, value: Any, metadata: Dict = {}) -> ValidationResult:
-        if not value or not isinstance(value, str):
-            return ValidationResult(value=value, validation_passed=True)
-        result = value
-        for pattern, replacement in self.PATTERNS:
-            result = pattern.sub(replacement, result)
-        passed = result == value
-        return ValidationResult(value=result, validation_passed=passed)
-
-
-class CredentialValidator(Validator):
-    """Redacts credentials (passwords, API keys, secrets, tokens)."""
-    risk_type = "credentials"
-    pod_manager_type = ""
-
-    PATTERNS = [
-        (re.compile(r'\bPASS(?:WORD)?\s*[=:]\s*\S+', re.IGNORECASE), '[CREDENTIAL-REDACTED]'),
-        (re.compile(r'\bAPI[_-]?KEY\s*[=:]\s*\S+', re.IGNORECASE), '[CREDENTIAL-REDACTED]'),
-        (re.compile(r'\bSECRET\s*[=:]\s*\S+', re.IGNORECASE), '[CREDENTIAL-REDACTED]'),
-        (re.compile(r'\bTOKEN\s*[=:]\s*\S+', re.IGNORECASE), '[CREDENTIAL-REDACTED]'),
-    ]
-
-    def validate(self, value: Any, metadata: Dict = {}) -> ValidationResult:
-        if not value or not isinstance(value, str):
-            return ValidationResult(value=value, validation_passed=True)
-        result = value
-        for pattern, replacement in self.PATTERNS:
-            result = pattern.sub(replacement, result)
-        passed = result == value
-        return ValidationResult(value=result, validation_passed=passed)
-
-
-class DangerousRecommendationValidator(Validator):
-    """Blocks recommendations that suggest bypassing safety, quality, or compliance controls."""
-    risk_type = "dangerous_recommendation"
-    pod_manager_type = ""
-
-    BLOCKED_PATTERNS = [
-        re.compile(r'\bbypass\s+(?:the\s+)?(?:audit\s+trail|quality\s+check|security|authentication)\b', re.IGNORECASE),
-        re.compile(r'\bignore\s+(?:the\s+)?(?:FDA|regulation|compliance|validation|SOP)\b', re.IGNORECASE),
-        re.compile(r'\bdelete\s+(?:the\s+)?(?:audit|log|record|trail)\b', re.IGNORECASE),
-        re.compile(r'\bdisable\s+(?:the\s+)?(?:alarm|alert|monitoring|safety)\b', re.IGNORECASE),
-        re.compile(r'\bskip\s+(?:the\s+)?(?:calibration|validation|testing|inspection)\b', re.IGNORECASE),
-        re.compile(r'\baccess\s+(?:restricted|unauthorized|confidential)\b', re.IGNORECASE),
-    ]
-
-    def validate(self, value: Any, metadata: Dict = {}) -> ValidationResult:
-        if not value or not isinstance(value, str):
-            return ValidationResult(value=value, validation_passed=True)
-        for pattern in self.BLOCKED_PATTERNS:
-            if pattern.search(value):
-                blocked_msg = "[GUARDRAIL: This recommendation was blocked as it suggests an unsafe action. Please consult your SOP and QA team.]"
-                return ValidationResult(value=blocked_msg, validation_passed=False)
-        return ValidationResult(value=value, validation_passed=True)
 
 
 class OutputGuardrail:
-    """Validates and sanitizes agent outputs using Guardrails AI"""
+    """Validates and sanitizes agent outputs using Guardrails AI when available, regex fallback otherwise."""
 
     def __init__(self):
         if HAS_GUARDRAILS:
@@ -122,30 +120,7 @@ class OutputGuardrail:
             self.text_guard = None
             self.action_guard = None
 
-    def _sanitize_text_fallback(self, text: str) -> str:
-        """Fallback regex-based sanitization when Guardrails AI is not installed."""
-        if not text or not isinstance(text, str):
-            return text
-        patterns = (
-            PIIValidator.REDACTION_PATTERNS
-            + PharmaSensitiveValidator.PATTERNS
-            + CredentialValidator.PATTERNS
-        )
-        for pattern, replacement in patterns:
-            text = pattern.sub(replacement, text)
-        return text
-
-    def _check_recommendation_fallback(self, action: str) -> tuple:
-        """Fallback regex-based recommendation check when Guardrails AI is not installed."""
-        if not action or not isinstance(action, str):
-            return True, ""
-        for pattern in DangerousRecommendationValidator.BLOCKED_PATTERNS:
-            if pattern.search(action):
-                return False, f"Blocked recommendation: contains unsafe suggestion matching '{pattern.pattern}'"
-        return True, ""
-
     def sanitize_text(self, text: str) -> str:
-        """Remove PII and sensitive information from text"""
         if not text or not isinstance(text, str):
             return text
         if self.text_guard is not None:
@@ -153,11 +128,12 @@ class OutputGuardrail:
                 result = self.text_guard.validate(text)
                 return result.validated_output
             except Exception:
-                return self._sanitize_text_fallback(text)
-        return self._sanitize_text_fallback(text)
+                pass
+        for pattern, replacement in _ALL_REDACTION_PATTERNS:
+            text = pattern.sub(replacement, text)
+        return text
 
     def check_recommendation(self, action: str) -> tuple:
-        """Check if a recommended action contains dangerous suggestions."""
         if not action or not isinstance(action, str):
             return True, ""
         if self.action_guard is not None:
@@ -165,13 +141,15 @@ class OutputGuardrail:
                 result = self.action_guard.validate(action)
                 if result.validation_passed:
                     return True, ""
-                return False, f"Blocked recommendation: dangerous action detected"
+                return False, "Blocked recommendation: dangerous action detected"
             except Exception:
-                return self._check_recommendation_fallback(action)
-        return self._check_recommendation_fallback(action)
+                pass
+        for pattern in _DANGEROUS_PATTERNS:
+            if pattern.search(action):
+                return False, f"Blocked recommendation: contains unsafe suggestion matching '{pattern.pattern}'"
+        return True, ""
 
     def validate_hypothesis(self, hypothesis: Dict[str, Any]) -> Dict[str, Any]:
-        """Full guardrail validation on a hypothesis output."""
         result = dict(hypothesis)
         guardrail_log = []
 
@@ -214,7 +192,6 @@ class OutputGuardrail:
         return result
 
     def validate_report(self, report_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Sanitize any free-text fields in report data"""
         result = dict(report_data)
         for key, value in result.items():
             if isinstance(value, str) and len(value) > 10:
