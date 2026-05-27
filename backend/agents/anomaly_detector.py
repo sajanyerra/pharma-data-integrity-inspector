@@ -112,6 +112,11 @@ class AnomalyDetector(BaseAgent):
                 timestamps = tag_data["timestamps"]
                 quality_codes = tag_data["quality_codes"]
 
+                readings_like = [
+                    {"value": v, "quality_code": qc, "timestamp": ts}
+                    for v, qc, ts in zip(values_array, quality_codes, timestamps)
+                ]
+
                 print(f"[AnomalyDetector] {tag_id}: {len(values_array)} readings, mean={np.mean(values_array):.2f}, std={np.std(values_array):.2f}, min={np.min(values_array):.2f}, max={np.max(values_array):.2f}")
 
                 drift_anomaly = self._check_sensor_drift(tag_id, values_array, profile)
@@ -120,14 +125,6 @@ class AnomalyDetector(BaseAgent):
                     print(f"  -> DRIFT detected: {drift_anomaly['evidence']}")
 
                 stuck_anomaly = self._check_stuck_value(tag_id, values_array, readings_like)
-                if stuck_anomaly:
-                    anomalies.append(stuck_anomaly)
-                    print(f"  -> STUCK detected: {stuck_anomaly['evidence']}")
-
-                readings_like = [
-                    {"value": v, "quality_code": qc, "timestamp": ts}
-                    for v, qc, ts in zip(values_array, quality_codes, timestamps)
-                ]
 
                 drift_anomaly = self._check_sensor_drift(tag_id, values_array, profile)
                 if drift_anomaly:
