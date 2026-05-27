@@ -426,19 +426,22 @@ async def run_analysis(request: RunAnalysisRequest):
     
     async def _run():
         try:
+            print(f"[Analyze] Starting pipeline for job {job_id}...")
             pipeline = PharmaPipeline()
             result = await pipeline.run({
                 "hours": request.hours,
                 "tag_ids": request.tag_ids
             })
             
-            _analysis_jobs[job_id]["progress"] = "Clearing old anomalies..."
+            num_anomalies = len(result.get("anomalies", []))
+            print(f"[Analyze] Pipeline found {num_anomalies} anomalies")
+            _analysis_jobs[job_id]["progress"] = f"Found {num_anomalies} anomalies, saving..."
+            
             async with async_session_maker() as session:
                 from sqlalchemy import text
                 await session.execute(text("DELETE FROM anomalies"))
                 await session.commit()
             
-            _analysis_jobs[job_id]["progress"] = "Saving anomalies..."
             async with async_session_maker() as session:
                 from sqlalchemy import text
                 for anomaly in result["anomalies"]:
@@ -499,6 +502,31 @@ async def run_analysis(request: RunAnalysisRequest):
     
     asyncio.create_task(_run())
     return {"job_id": job_id, "status": "started"}
+
+
+@app.post("/analyze-sync")
+async def run_analysis_sync(request: RunAnalysisRequest):
+    """Synchronous analysis for debugging"""
+    try:
+        pipeline = PharmaPipeline()
+        result = await pipeline.run({
+            "hours": request.hours,
+            "tag_ids": request.tag_ids
+        })
+        anomalies = result.get("anomalies", [])
+        return {
+            "status": "success",
+            "anomalies_detected": len(anomalies),
+            "anomalies": [
+                {"tag_id": a.get("tag_id"), "anomaly_type": a.get("anomaly_type"), "confidence": float(a.get("confidence", 0))}
+                for a in anomalies
+            ],
+            "tag_profiles_count": len(result.get("tag_profiles", {})),
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/analyze/status/{job_id}")
