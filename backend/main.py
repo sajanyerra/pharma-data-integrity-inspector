@@ -504,7 +504,54 @@ async def run_analysis(request: RunAnalysisRequest):
     return {"job_id": job_id, "status": "started"}
 
 
-@app.post("/analyze-sync")
+@app.post("/reseed")
+async def reseed_data():
+    """Clear and reseed all data with fresh 24h of historical data"""
+    from sqlalchemy import text as sa_text
+    try:
+        simulator = TagSimulator(seed=42)
+        start_time = datetime.utcnow() - timedelta(hours=24)
+        async with async_session_maker() as session:
+            await session.execute(sa_text("DELETE FROM anomalies"))
+            await session.execute(sa_text("DELETE FROM agent_trace"))
+            await session.execute(sa_text("DELETE FROM tag_readings"))
+            await session.commit()
+        
+        batch_size = 500
+        batch = []
+        inserted = 0
+        async with async_session_maker() as session:
+            for i in range(24 * 60):
+                ts = start_time + timedelta(minutes=i)
+                readings = simulator.generate_all_tags(ts)
+                for r in readings:
+                    batch.append({
+                        'tag_id': r['tag_id'],
+                        'timestamp': r['timestamp'],
+                        'value': r['value'],
+                        'quality_code': r['quality_code']
+                    })
+                    if len(batch) >= batch_size:
+                        await session.execute(
+                            sa_text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
+                            batch
+                        )
+                        await session.commit()
+                        inserted += len(batch)
+                        batch = []
+            if batch:
+                await session.execute(
+                    sa_text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
+                    batch
+                )
+                await session.commit()
+                inserted += len(batch)
+        
+        return {"status": "success", "readings_seeded": inserted}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 async def run_analysis_sync(request: RunAnalysisRequest):
     """Synchronous analysis for debugging"""
     try:
@@ -545,6 +592,40 @@ async def get_analysis_status(job_id: str):
     if job_id not in _analysis_jobs:
         raise HTTPException(status_code=404, detail="Job not found")
     return _analysis_jobs[job_id]
+
+
+@app.post("/analyze-sync")
+async def run_analysis_sync(request: RunAnalysisRequest):
+    """Synchronous analysis for debugging"""
+    try:
+        pipeline = PharmaPipeline()
+        result = await pipeline.run({
+            "hours": request.hours,
+            "tag_ids": request.tag_ids
+        })
+        anomalies = result.get("anomalies", [])
+        profiles = result.get("tag_profiles", {})
+        
+        debug_info = {}
+        for tid in list(profiles.keys())[:5]:
+            p = profiles[tid]
+            debug_info[tid] = {"count": p.get("count"), "mean": round(p.get("mean", 0), 2), "std": round(p.get("std", 0), 2)}
+        
+        return {
+            "status": "success",
+            "anomalies_detected": len(anomalies),
+            "anomalies": [
+                {"tag_id": a.get("tag_id"), "anomaly_type": a.get("anomaly_type"), "confidence": float(a.get("confidence", 0))}
+                for a in anomalies
+            ],
+            "tag_profiles_count": len(profiles),
+            "debug_profiles": debug_info,
+            "current_step": result.get("current_step"),
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def _wait_for_seed():
