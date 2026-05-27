@@ -125,9 +125,11 @@ class PharmaPipeline:
 
         profile_result = await profile_step(state)
         state.update(profile_result)
+        print(f"[Pipeline] Agent 1 done: {len(state.get('tag_profiles', {}))} profiles")
 
         detect_result = await detect_step(state)
         state.update(detect_result)
+        print(f"[Pipeline] Agent 2 done: {len(state.get('anomalies', []))} anomalies")
 
         return {
             "tag_profiles": state["tag_profiles"],
