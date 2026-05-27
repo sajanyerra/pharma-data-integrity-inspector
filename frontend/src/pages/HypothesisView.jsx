@@ -46,12 +46,11 @@ export default function HypothesisView() {
         if (pollAttempts > 60) { clearInterval(poll); setGenerating(false); alert('Timed out.'); return }
         try {
           const statusRes = await axios.get(`${API_BASE}/analyze/status/${jobId}`)
-          const { status, result, error } = statusRes.data
+          const { status, error } = statusRes.data
           if (status === 'completed') {
             clearInterval(poll)
             setGenerating(false)
-            if (result && result.hypotheses) setHypotheses(result.hypotheses)
-            else await fetchHypotheses()
+            await fetchHypotheses()
           } else if (status === 'failed') {
             clearInterval(poll)
             setGenerating(false)

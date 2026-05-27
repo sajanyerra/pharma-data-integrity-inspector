@@ -75,7 +75,7 @@ function App() {
   const isStatsPage = location.pathname === '/stats'
 
   const getStepState = (i) => {
-    if (i === 0) return 'done'
+    if (i === 0) return anomalyCount > 0 ? 'done' : 'available'
     if (i === 1) return anomalyCount > 0 ? 'done' : 'locked'
     if (i === 2) return approvedCount > 0 ? 'done' : anomalyCount > 0 ? 'available' : 'locked'
     if (i === 3) return hypothesisCount > 0 ? 'done' : approvedCount > 0 ? 'available' : 'locked'

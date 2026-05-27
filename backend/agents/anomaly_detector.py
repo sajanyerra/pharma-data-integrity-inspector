@@ -114,21 +114,21 @@ class AnomalyDetector(BaseAgent):
                 if impossible_anomaly:
                     anomalies.append(impossible_anomaly)
                 
-                quality_anomaly = self._check_quality_mismatch(tag_id, values_array, profile)
-                if quality_anomaly:
-                    anomalies.append(quality_anomaly)
+                # quality_anomaly = self._check_quality_mismatch(tag_id, values_array, profile)
+                # if quality_anomaly:
+                #     anomalies.append(quality_anomaly)
                 
                 roc_anomaly = self._check_rate_of_change(tag_id, values_array, readings, data_type)
                 if roc_anomaly:
                     anomalies.append(roc_anomaly)
                 
-                gap_anomaly = self._check_data_gaps(tag_id, readings)
-                if gap_anomaly:
-                    anomalies.append(gap_anomaly)
+                # gap_anomaly = self._check_data_gaps(tag_id, readings)
+                # if gap_anomaly:
+                #     anomalies.append(gap_anomaly)
                 
-                outlier_anomaly = self._check_statistical_outliers(tag_id, values_array, profile)
-                if outlier_anomaly:
-                    anomalies.append(outlier_anomaly)
+                # outlier_anomaly = self._check_statistical_outliers(tag_id, values_array, profile)
+                # if outlier_anomaly:
+                #     anomalies.append(outlier_anomaly)
             
             correlation_anomalies = await self._check_correlations(cutoff_time)
             anomalies.extend(correlation_anomalies)
