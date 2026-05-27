@@ -425,21 +425,19 @@ async def run_analysis(request: RunAnalysisRequest):
     _analysis_jobs[job_id] = {"status": "running", "progress": "Starting pipeline...", "result": None, "error": None}
     
     async def _run():
-        try:
-            _analysis_jobs[job_id]["progress"] = "Seeding data if needed..."
-            await _wait_for_seed()
-            _analysis_jobs[job_id]["progress"] = "Running Agent 1: Data Profiler..."
-            pipeline = PharmaPipeline()
-            result = await pipeline.run({
-                "hours": request.hours,
-                "tag_ids": request.tag_ids
-            })
-            
+    try:
+        pipeline = PharmaPipeline()
+        result = await pipeline.run({
+            "hours": request.hours,
+            "tag_ids": request.tag_ids
+        })
+        
+        _analysis_jobs[job_id]["progress"] = "Clearing old anomalies..."
+        async with async_session_maker() as session:
+            from sqlalchemy import text
+            await session.execute(text("DELETE FROM anomalies"))
+            await session.commit()
             _analysis_jobs[job_id]["progress"] = "Saving anomalies..."
-            async with async_session_maker() as session:
-                from sqlalchemy import text
-                import json
-                await session.execute(text("DELETE FROM anomalies"))
                 
                 for anomaly in result["anomalies"]:
                     evidence = anomaly.get("evidence", {})
