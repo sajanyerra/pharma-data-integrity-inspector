@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 
 from database import init_db, get_db, async_session_maker
@@ -63,6 +63,51 @@ class RunAnalysisRequest(BaseModel):
     tag_ids: Optional[List[str]] = None
 
 
+async def auto_seed_if_empty():
+    """Seed 24h of historical tag data if tag_readings is empty"""
+    from sqlalchemy import text, select, func
+    async with async_session_maker() as session:
+        result = await session.execute(select(func.count()).select_from(TagReading))
+        count = result.scalar()
+        if count > 0:
+            print(f"Database has {count:,} readings — skipping seed")
+            return
+        print("No readings found — seeding 24h of historical data...")
+        simulator = TagSimulator(seed=42)
+        start_time = datetime.utcnow() - timedelta(hours=24)
+        batch_size = 500
+        batch = []
+        inserted = 0
+        for i in range(24 * 3600 // 5):
+            ts = start_time + timedelta(seconds=i * 5)
+            readings = simulator.generate_all_tags(ts)
+            for r in readings:
+                batch.append({
+                    'tag_id': r['tag_id'],
+                    'timestamp': r['timestamp'],
+                    'value': r['value'],
+                    'quality_code': r['quality_code']
+                })
+                if len(batch) >= batch_size:
+                    await session.execute(
+                        text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
+                        batch
+                    )
+                    await session.commit()
+                    inserted += len(batch)
+                    batch = []
+                    if inserted % 5000 == 0:
+                        print(f"  Seeded {inserted:,} readings...")
+        if batch:
+            await session.execute(
+                text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
+                batch
+            )
+            await session.commit()
+            inserted += len(batch)
+        print(f"[OK] Seeded {inserted:,} readings")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
@@ -78,6 +123,7 @@ async def lifespan(app: FastAPI):
     print("Starting Pharma Data Integrity Inspector...")
     await init_db()
     print("Database initialized")
+    await auto_seed_if_empty()
     yield
     print("Shutting down...")
 
