@@ -1,6 +1,6 @@
 # Pharma Data Integrity Inspector
 
-**4 AI agents that catch sensor data your historian misses — including sensors that are wrong but look perfectly normal.**
+**3 AI agents that catch sensor data your historian misses — including sensors that are wrong but look perfectly normal.**
 
 Most pharma data quality tools check each sensor in isolation: thresholds, quality codes, range checks. They all miss the same thing — a sensor reading 172°C when the real temperature is 175°C. It passes every check. Quality code says "Good." No alarm fires. But the batch is compromised.
 
@@ -18,16 +18,18 @@ Cross-Sensor Corroboration fixes this by cross-referencing physically-coupled se
 
 ## What It Does
 
-- **4 AI agents** orchestrated by LangGraph: Data Profiler → Anomaly Detector → (HITL gate) → Hypothesis Generator → Report Generator
-- **11 integrity checks** — 10 standard + Check 11: Cross-Sensor Corroboration (novel)
+- **3 AI agents** orchestrated by LangGraph: Anomaly Detector (with inline profiling) → (HITL gate) → Hypothesis Generator → Report Generator
+- **9 integrity checks** — 8 standard + Check 9: Cross-Sensor Corroboration (novel)
 - **Human-in-the-Loop gate** between Agent 2 and Agent 3 — you approve anomalies before AI generates root causes (FDA 21 CFR Part 11 aligned)
 - **Output Guardrail** — PII, batch numbers, credentials, and dangerous recommendations are blocked before any AI output reaches the user
-- **Causal tag simulator** with physics-based coupling (Clausius-Clapeyron, mass balance, pump curves) — not random noise
-- **Dark mode** with navy palette, data-driven navigation, Stats for Nerds page
+- **Random anomalies each run** — 2-4 from a pool of 6 types (drift, stuck, spike, noise_burst, silent_lie), no tag overlap
+- **Fast detection** — ~5-8s instead of ~30s thanks to merged profiler, single SQL query, and async LLM calls
+- **Dark mode** with navy palette, guided pipeline steps as navigation, "Next Step" CTAs
+- **Stats for Nerds** page for curious learners
 
-## The Novel Check: Cross-Sensor Corroboration (Check 11)
+## The Novel Check: Cross-Sensor Corroboration (Check 9)
 
-Most data quality tools operate per-sensor. If a reading is within range and has a "Good" quality code, it passes. Check 11 does something different: it segments the correlation timeline between a suspect tag and its physically-coupled witness sensors. When the correlation pattern changes and the trend direction contradicts what physics predicts, the sensor is flagged — even though no individual threshold was breached.
+Most data quality tools operate per-sensor. If a reading is within range and has a "Good" quality code, it passes. Check 9 does something different: it segments the correlation timeline between a suspect tag and its physically-coupled witness sensors. When the correlation pattern changes and the trend direction contradicts what physics predicts, the sensor is flagged — even though no individual threshold was breached.
 
 **Example:** TI-101 reports 172°C (normal range, Good quality). But PI-101 trends upward (suggesting 175°C+) and FI-201 rises (cooling compensating for heat you can't see). The sensor is wrong by 3°C. No historian catches that. We do.
 
@@ -36,17 +38,15 @@ Most data quality tools operate per-sensor. If a reading is within range and has
 ## Architecture
 
 ```
-TagSimulator (20 tags, 5s interval, causal couplings + Silent Lie injection)
+TagSimulator (20 tags, 30s interval, causal couplings + random 2-4 anomalies)
     ↓
-Agent 1: Data Profiler ─── SQL + numpy + GPT-4o ─── builds baselines
-    ↓
-Agent 2: Anomaly Detector ─── 11 checks + GPT-4o ─── flags issues, AI analyzes patterns
+Agent 2: Anomaly Detector ─── 1 bulk query + inline profiles + 9 checks + Llama 3.1 (async) ─── flags issues
     ↓
 HITL Gate ─── human approves/rejects ─── FDA 21 CFR Part 11
     ↓
-Agent 3: Hypothesis Generator ─── GPT-4o + domain KB ─── root causes + remediation
+Agent 3: Hypothesis Generator ─── Llama 3.1 + domain KB ─── root causes + remediation
     ↓
-Agent 4: Report Generator ─── GPT-4o + Jinja2 ─── PDF/HTML/JSON
+Agent 4: Report Generator ─── Llama 3.1 + Jinja2 ─── PDF/HTML/JSON
     ↓
 OutputGuardrail ─── PII, pharma-sensitive, dangerous recs ─── blocks before user sees
 ```
@@ -57,11 +57,11 @@ OutputGuardrail ─── PII, pharma-sensitive, dangerous recs ─── blocks
 
 | Layer | Technology |
 |---|---|
-| LLM | OpenAI GPT-4o |
-| Orchestration | LangGraph StateGraph, LangChain, LangSmith (EU) |
+| LLM | Groq Llama 3.1 8B Instant (via langchain_openai) |
+| Orchestration | LangGraph StateGraph, LangChain |
 | Backend | FastAPI, SQLAlchemy 2.0 (async), Pydantic v2 |
-| Data/Stats | NumPy, SciPy (Pearson r, p-values), Pandas |
-| Database | PostgreSQL 18 |
+| Data/Stats | NumPy, SciPy (Pearson r, p-values) |
+| Database | PostgreSQL (Render) |
 | Safety | OutputGuardrail (regex + pattern matching + confidence bounding) |
 | Reporting | ReportLab (PDF), Jinja2 (HTML) |
 | Frontend | React 19, Vite, Tailwind CSS (dark mode), Framer Motion |
@@ -74,12 +74,12 @@ OutputGuardrail ─── PII, pharma-sensitive, dangerous recs ─── blocks
 
 - Python 3.11+
 - Node.js 18+
-- PostgreSQL 18+
+- PostgreSQL 16+
 
 ### 1. Clone & Setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/pharma-data-integrity-inspector.git
+git clone https://github.com/sajanyerra/pharma-data-integrity-inspector.git
 cd pharma-data-integrity-inspector
 ```
 
@@ -87,14 +87,13 @@ cd pharma-data-integrity-inspector
 
 ```bash
 # Create PostgreSQL database
-psql -U postgres -c "CREATE USER pharma_user WITH PASSWORD 'pharma_pass';"
-psql -U postgres -c "CREATE DATABASE pharma_data OWNER pharma_user;"
+createdb pharma_data
 
 # Create schema
-psql -U pharma_user -d pharma_data -f scripts/create_schema.sql
+psql -d pharma_data -f scripts/create_schema.sql
 
 # Seed tag metadata
-psql -U pharma_user -d pharma_data -f scripts/seed_tags.sql
+psql -d pharma_data -f scripts/seed_tags.sql
 ```
 
 ### 3. Backend
@@ -111,8 +110,10 @@ pip install -r requirements.txt
 
 # Copy and edit .env with your keys
 cp .env.example .env
-# Set OPENAI_API_KEY (required)
-# Set LANGSMITH_API_KEY (optional, for tracing)
+# Set LLM_API_KEY (Groq key, required)
+# Set LLM_BASE_URL=https://api.groq.com/openai/v1
+# Set LLM_MODEL=llama-3.1-8b-instant
+# Set DATABASE_URL (PostgreSQL connection string)
 
 # Seed 24h of historical data
 python seed_historical_data.py
@@ -131,44 +132,38 @@ npm run dev
 # Runs on http://localhost:5173
 ```
 
-### 5. Or use the start script
-
-```bash
-# Windows — starts both servers
-start-servers.bat
-```
-
 Open http://localhost:5173 and click **Start Analysis**.
 
 ---
 
-## 11 Integrity Checks
+## 9 Active Integrity Checks
 
 | # | Check | What It Catches | Method |
 |---|---|---|---|
-| 1 | Sensor Drift | Gradual calibration degradation | Rolling mean comparison (1h vs 6h) |
-| 2 | Stuck Value | Transmitter stopped updating | <3 unique values in sliding window |
+| 1 | Sensor Drift | Gradual calibration degradation | Rolling mean comparison (1h vs 6h, threshold 1%/hr) |
+| 2 | Stuck Value | Transmitter stopped updating | Adaptive window, <3 unique values |
 | 3 | Impossible Readings | Outside physical possibility | Per-datatype limits (e.g., T < -273°C) |
-| 4 | Quality Code Mismatch | SCADA says Good but data is outlier | IQR outlier % vs Good quality % |
-| 5 | Rate-of-Change | Impossible step changes | Delta between consecutive 5-sec readings |
-| 6 | Data Gaps | Missing historian data | Time gap > 2× scan rate |
-| 7 | Statistical Outliers | Extreme value deviations | Z-score > 5, >5% of readings |
-| 8 | Correlation Breakdown | Related tags stopped correlating | Split-half Pearson r shift > 0.6 |
-| 9 | CIP Temperature Low | Incomplete cleaning cycle | CIP supply temp < 70°C |
-| 10 | FDA Audit Trail | 21 CFR Part 11 concern | >50% non-Good quality codes |
-| **11** | **Cross-Sensor Corroboration** | **Sensor PLAUSIBLE but WRONG** | **Segmented correlation + trend direction** |
+| 4 | Rate-of-Change | Impossible step changes | Type-specific thresholds, >10 violations |
+| 5 | Noise Burst | Sudden noise spikes | >5x baseline std deviation |
+| 6 | Correlation Breakdown | Related tags stopped correlating | Split-half Pearson r shift > 0.8 |
+| 7 | CIP Temperature Low | Incomplete cleaning cycle | CIP supply temp < 70°C |
+| 8 | FDA Audit Trail | 21 CFR Part 11 concern | >50% non-Good quality codes |
+| **9** | **Cross-Sensor Corroboration** | **Sensor PLAUSIBLE but WRONG** | **Segmented correlation + trend direction with witness sensors** |
 
 ---
 
-## Demo Anomalies
+## Random Anomaly Pool
 
-The TagSimulator injects 3 reproducible anomalies:
+The TagSimulator injects 2-4 random anomalies per reseed from this pool (no tag overlap):
 
-| Tag | Type | Description |
-|---|---|---|
-| TI-101 | Sensor Drift | +2.5°C/hr drift starting at hour 10 |
-| VI-301 | Stuck Value | Frozen at 4.2 mm/s for 6 hours |
-| TI-101 | Cross-Sensor Inconsistency | 3°C offset (172 vs 175°C) hours 10-14, Good quality code |
+| Type | Example Tags | What Happens |
+|------|-------------|-------------|
+| `sensor_drift` | TI-101, PI-101 | Gradual drift at 1-5%/hr |
+| `stuck_value` | VI-301, PI-401 | Value frozen for 2-8 hours |
+| `spike` | TI-101, AI-901 | Sudden 3-8x multiplier |
+| `noise_burst` | TI-201, VI-301 | 3-8x noise for 1-4 hours |
+| `silent_lie` | TI-101, TI-201 | 2-6% offset with Good quality code |
+| `sensor_drift` (slow) | PI-502, FI-601 | Slow drift at 0.5-2% (harder to detect) |
 
 ---
 
@@ -177,18 +172,21 @@ The TagSimulator injects 3 reproducible anomalies:
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/health` | System status |
-| GET | `/tags/live` | Live tag values (5s refresh) |
+| GET | `/tags/live` | Live tag values (30s refresh) |
 | GET | `/anomalies` | Detected anomalies |
-| POST | `/analyze` | Run Agent 1-2 pipeline |
-| POST | `/anomalies/select` | HITL approve/reject |
+| POST | `/analyze` | Run Anomaly Detector pipeline |
+| POST | `/anomalies/select-batch` | HITL approve/reject |
 | POST | `/generate-hypotheses` | Agent 3 root causes |
 | POST | `/generate-reports` | Agent 4 reports |
+| GET | `/reports/download/{type}` | Download PDF/HTML/JSON |
 | GET | `/trace` | Agent execution log |
 | GET | `/stats/correlations` | Live correlation matrix |
 | GET | `/stats/causal-groups` | Causal model definition |
-| GET | `/stats/integrity-checks` | All 11 check metadata |
+| GET | `/stats/integrity-checks` | All 9 check metadata |
 | GET | `/stats/tech-stack` | Technology stack details |
 | GET | `/stats/pipeline` | Pipeline architecture info |
+| POST | `/reseed` | Reseed data with new random anomalies |
+| POST | `/reset` | Clear anomalies and traces |
 
 ---
 
@@ -201,7 +199,7 @@ The TagSimulator injects 3 reproducible anomalies:
 3. Build command: `pip install -r requirements.txt`
 4. Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
 5. Add PostgreSQL addon on Render
-6. Set environment variables: `OPENAI_API_KEY`, `DATABASE_URL`, `LANGSMITH_API_KEY` (optional)
+6. Set environment variables: `LLM_API_KEY` (Groq), `LLM_BASE_URL`, `LLM_MODEL`, `DATABASE_URL`
 
 ### Vercel (Frontend)
 
@@ -209,7 +207,6 @@ The TagSimulator injects 3 reproducible anomalies:
 2. Set root directory to `frontend/`
 3. Framework: Vite
 4. Set `VITE_API_BASE` environment variable to your Render backend URL
-5. Update `API_BASE` in each page component to use `import.meta.env.VITE_API_BASE`
 
 ---
 
