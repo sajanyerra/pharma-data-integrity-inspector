@@ -812,6 +812,7 @@ async def get_agent_trace(limit: int = 100):
     """Get agent execution trace"""
     async with async_session_maker() as session:
         from sqlalchemy import select, desc
+        import json
         
         query = (
             select(AgentTrace)
@@ -822,16 +823,28 @@ async def get_agent_trace(limit: int = 100):
         result = await session.execute(query)
         traces = result.scalars().all()
         
-        return [
-            {
-                "id": t.id,
-                "agent_name": t.agent_name,
-                "input": t.input,
-                "output": t.output,
-                "created_at": t.created_at.isoformat()
-            }
-            for t in traces
-        ]
+        out = []
+        for t in traces:
+            try:
+                inp = json.loads(t.input) if isinstance(t.input, str) else t.input
+                outp = json.loads(t.output) if isinstance(t.output, str) else t.output
+                out.append({
+                    "id": t.id,
+                    "agent_name": t.agent_name,
+                    "input": inp,
+                    "output": outp,
+                    "created_at": t.created_at.isoformat() if t.created_at else None
+                })
+            except Exception as e:
+                out.append({
+                    "id": t.id,
+                    "agent_name": t.agent_name,
+                    "input": str(t.input)[:200] if t.input else None,
+                    "output": str(t.output)[:200] if t.output else None,
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                    "error": str(e)
+                })
+        return out
 
 
 @app.delete("/anomalies/clear")
