@@ -309,60 +309,80 @@ async def get_streaming_data():
         return latest_readings
 
 
-@app.get("/anomalies", response_model=List[AnomalyResponse])
+@app.get("/anomalies")
 async def get_anomalies(
     status: Optional[str] = None,
     limit: int = 100
 ):
     """Get detected anomalies with optional status filter"""
     import json as _json
-    async with async_session_maker() as session:
-        from sqlalchemy import select
-        
-        query = select(Anomaly).order_by(Anomaly.detected_at.desc()).limit(limit)
-        
-        if status:
-            query = query.where(Anomaly.hitl_status == status)
-        
-        result = await session.execute(query)
-        anomalies = result.scalars().all()
-        
-        response = []
-        for a in anomalies:
-            tag_info = await session.execute(
-                select(Tag.tag_name).where(Tag.tag_id == a.tag_id)
-            )
-            tag_name = tag_info.scalar()
+    try:
+        async with async_session_maker() as session:
+            from sqlalchemy import select
             
-            evidence = a.evidence or {}
-            if isinstance(evidence, str):
-                try:
-                    evidence = _json.loads(evidence)
-                except:
-                    evidence = {}
+            query = select(Anomaly).order_by(Anomaly.detected_at.desc()).limit(limit)
             
-            confidence = float(a.confidence) if a.confidence else 0
-            severity = evidence.get("severity") if isinstance(evidence, dict) and evidence.get("severity") else ("high" if confidence > 0.8 else "medium" if confidence > 0.5 else "low")
+            if status:
+                query = query.where(Anomaly.hitl_status == status)
             
-            response.append(
-                AnomalyResponse(
-                    id=a.id,
-                    tag_id=a.tag_id,
-                    tag_name=tag_name,
-                    anomaly_type=a.anomaly_type,
-                    confidence=confidence,
-                    evidence=evidence,
-                    detected_at=a.detected_at,
-                    hitl_status=a.hitl_status,
-                    severity=severity,
-                    hypothesis=a.hypothesis,
-                    recommended_action=a.recommended_action
+            result = await session.execute(query)
+            anomalies = result.scalars().all()
+            
+            response = []
+            for a in anomalies:
+                tag_info = await session.execute(
+                    select(Tag.tag_name).where(Tag.tag_id == a.tag_id)
                 )
-            )
-            if isinstance(evidence, dict) and evidence.get("is_silent_lie"):
-                response[-1].evidence["is_silent_lie"] = True
-        
-        return response
+                tag_name = tag_info.scalar()
+                
+                evidence = a.evidence or {}
+                if isinstance(evidence, str):
+                    try:
+                        evidence = _json.loads(evidence)
+                    except:
+                        evidence = {}
+                
+                try:
+                    confidence = float(a.confidence) if a.confidence else 0
+                except (TypeError, ValueError):
+                    confidence = 0
+                
+                severity = "low"
+                if isinstance(evidence, dict):
+                    ev_sev = evidence.get("severity")
+                    if ev_sev in ("high", "medium", "low", "critical"):
+                        severity = ev_sev
+                    elif confidence > 0.8:
+                        severity = "high"
+                    elif confidence > 0.5:
+                        severity = "medium"
+                else:
+                    if confidence > 0.8:
+                        severity = "high"
+                    elif confidence > 0.5:
+                        severity = "medium"
+                
+                response.append({
+                    "id": a.id,
+                    "tag_id": a.tag_id,
+                    "tag_name": tag_name,
+                    "anomaly_type": a.anomaly_type,
+                    "confidence": confidence,
+                    "evidence": evidence,
+                    "detected_at": a.detected_at.isoformat() if a.detected_at else None,
+                    "hitl_status": a.hitl_status,
+                    "severity": severity,
+                    "hypothesis": a.hypothesis,
+                    "recommended_action": a.recommended_action
+                })
+                if isinstance(evidence, dict) and evidence.get("is_silent_lie"):
+                    response[-1]["evidence"]["is_silent_lie"] = True
+            
+            return response
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error fetching anomalies: {str(e)}")
 
 
 @app.post("/anomalies/select")

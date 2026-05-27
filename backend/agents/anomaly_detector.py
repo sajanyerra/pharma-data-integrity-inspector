@@ -284,7 +284,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         outliers = ((values < lower_bound) | (values > upper_bound)).sum()
         outlier_ratio = outliers / len(values)
         
-        if outlier_ratio > 0.05 and quality_codes.get("Good", 0) / sum(quality_codes.values()) > 0.9:
+        if outlier_ratio > 0.10 and quality_codes.get("Good", 0) / sum(quality_codes.values()) > 0.9:
             return {
                 "tag_id": tag_id,
                 "anomaly_type": "quality_code_mismatch",
@@ -317,7 +317,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         violations = np.abs(diffs) > threshold
         violation_count = np.sum(violations)
         
-        if violation_count > 5:
+        if violation_count > 20:
             max_violation = float(np.max(np.abs(diffs[violations])))
             return {
                 "tag_id": tag_id,
@@ -341,10 +341,10 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         gaps = []
         for i in range(1, len(readings)):
             time_diff = (readings[i]["timestamp"] - readings[i-1]["timestamp"]).total_seconds()
-            if time_diff > 10:
+            if time_diff > 300:
                 gaps.append(time_diff)
         
-        if gaps:
+        if gaps and len(gaps) > 3:
             return {
                 "tag_id": tag_id,
                 "anomaly_type": "data_gaps",
@@ -372,7 +372,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         outlier_count = np.sum(outliers)
         outlier_ratio = outlier_count / len(values)
         
-        if outlier_ratio > 0.05 and outlier_count > 10:
+        if outlier_ratio > 0.10 and outlier_count > 50:
             return {
                 "tag_id": tag_id,
                 "anomaly_type": "statistical_outliers",
@@ -424,7 +424,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
             
             correlation_shift = abs(corr_second - corr_first)
             
-            if correlation_shift > 0.6 and n > 200:
+            if correlation_shift > 0.7 and n > 200:
                 anomalies.append({
                     "tag_id": tag_a,
                     "anomaly_type": "correlation_breakdown",
@@ -468,7 +468,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         if "TI-601" in cip_by_tag:
             temp_values = cip_by_tag["TI-601"]
             low_temp_count = sum(1 for v in temp_values if v < 70)
-            if low_temp_count > 10:
+            if low_temp_count > 50:
                 anomalies.append({
                     "tag_id": "TI-601",
                     "anomaly_type": "cip_temperature_low",
