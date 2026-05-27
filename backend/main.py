@@ -1042,9 +1042,10 @@ async def get_pipeline_info():
             },
         ],
         "guardrail": {
-            "name": "OutputGuardrail",
+            "name": "OutputGuardrail (Guardrails AI)",
             "checks": ["PII redaction (SSN, email, phone, IP, names)", "Pharma-sensitive (batch/lot numbers, patient refs)", "Credential redaction", "Dangerous recommendation blocking", "Confidence bounding (cap at 0.95)"],
-            "applied_to": ["Agent 2 (hypothesis output)", "Agent 3 (report data)"]
+            "applied_to": ["Agent 2 (hypothesis output)", "Agent 3 (report data)"],
+            "framework": "Guardrails AI with custom validators (PIIValidator, PharmaSensitiveValidator, CredentialValidator, DangerousRecommendationValidator)"
         },
         "hitl": {
             "name": "Human-in-the-Loop Gate",
@@ -1079,6 +1080,7 @@ async def get_tech_stack():
                 {"name": "Uvicorn", "role": "ASGI server with hot-reload", "icon": "Server"},
                 {"name": "SQLAlchemy 2.0", "role": "Async PostgreSQL ORM", "icon": "Database"},
                 {"name": "Pydantic v2", "role": "Schema validation and settings management", "icon": "Shield"},
+                {"name": "Guardrails AI", "role": "Output guardrails — PII redaction, pharma-sensitive filtering, credential blocking, dangerous recommendation detection", "icon": "ShieldAlert"},
             ]
         },
         {
