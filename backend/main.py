@@ -84,15 +84,17 @@ async def _seed_background():
             if count > 0:
                 print(f"Database has {count:,} readings — skipping seed")
                 return
-            print("No readings found — seeding 24h of historical data (30-sec intervals)...")
+            print("No readings found — seeding 24h of historical data (2-min intervals)...")
             data_start = datetime.utcnow() - timedelta(hours=24)
             simulator = TagSimulator(seed=42, start_time=data_start)
             start_time = data_start
             batch_size = 1000
             batch = []
             inserted = 0
-            for i in range(24 * 120):
-                ts = start_time + timedelta(seconds=i * 30)
+            interval = 120  # 2-minute intervals
+            total_points = 24 * 30  # 720 readings per tag
+            for i in range(total_points):
+                ts = start_time + timedelta(seconds=i * interval)
                 readings = simulator.generate_all_tags(ts)
                 for r in readings:
                     batch.append({
@@ -513,7 +515,7 @@ async def run_analysis(request: RunAnalysisRequest):
 
 @app.post("/reseed")
 async def reseed_data():
-    """Clear and reseed all data with fresh 24h of historical data (30-sec intervals)"""
+    """Clear and reseed all data with fresh 24h of historical data (2-min intervals)"""
     from sqlalchemy import text as sa_text
     try:
         async with async_session_maker() as session:
@@ -527,9 +529,11 @@ async def reseed_data():
         batch_size = 2000
         batch = []
         inserted = 0
+        interval = 120  # 2-minute intervals
+        total_points = 24 * 30  # 720 readings per tag
         async with async_session_maker() as session:
-            for i in range(24 * 120):
-                ts = start_time + timedelta(seconds=i * 30)
+            for i in range(total_points):
+                ts = start_time + timedelta(seconds=i * interval)
                 readings = simulator.generate_all_tags(ts)
                 for r in readings:
                     batch.append({

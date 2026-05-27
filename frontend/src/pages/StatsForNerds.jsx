@@ -202,11 +202,11 @@ export default function StatsForNerds() {
           </div>
           <div className="bg-white dark:bg-slate-800 p-3 rounded-lg mb-3 text-xs space-y-1.5">
             <p className="text-foreground font-semibold">Your temp sensor reads 172°C. Normal range, Good quality code, passes every check. But the pressure and flow sensors contradict it — the real temperature is 175°C.</p>
-            <p className="text-amber-700 dark:text-amber-400 font-semibold">The sensor is wrong by 3°C. No historian would flag it. Cross-sensor corroboration catches it.</p>
+            <p className="text-amber-700 dark:text-amber-400 font-semibold">The sensor is wrong by 3°C. Cross-sensor corroboration catches what threshold checks miss.</p>
           </div>
           <div className="bg-secondary p-3 rounded-lg mb-3 text-xs text-muted-foreground space-y-1.5">
             <p><strong className="text-foreground">Why this is dangerous:</strong> You released a batch based on temperature data that was wrong. The actual process was 3°C hotter. In pharma, that difference can invalidate a batch.</p>
-            <p><strong className="text-foreground">Why no product catches this:</strong> Historians check each sensor in isolation (thresholds, quality codes). Analytics tools assume the data is correct. Nobody cross-references correlated sensors to ask: "Does this reading make sense given what the other sensors are doing?"</p>
+            <p><strong className="text-foreground">Why tools miss this:</strong> Historians check each sensor in isolation (thresholds, quality codes). Analytics tools assume data is correct. Nobody cross-references physically coupled sensors to ask: "Does this reading make sense given what the other sensors show?"</p>
             <p><strong className="text-foreground">How we catch it:</strong> Check 9 segments the correlation timeline between a suspect tag and its physically-coupled witnesses. When the correlation pattern changes and trends contradict the expected physical relationship, we flag it — even though the reading itself looks perfectly normal.</p>
           </div>
           {causalGroups?.silent_lie && (
@@ -222,7 +222,7 @@ export default function StatsForNerds() {
         <button onClick={() => toggle('checks')} className="w-full px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
           <div className="flex items-center gap-2">
             <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            <h2 className="text-sm font-bold text-foreground">11 Integrity Checks</h2>
+            <h2 className="text-sm font-bold text-foreground">9 Integrity Checks</h2>
             <span className="text-[10px] text-muted-foreground">({checks.length} checks)</span>
           </div>
           {expanded.checks ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
@@ -428,7 +428,7 @@ export default function StatsForNerds() {
               <div className="px-5 pb-4 space-y-3">
                 {[
                    { q: "What is Cross-Sensor Corroboration?", a: "Check 9. It catches sensors that read within normal range, pass quality codes, and pass every threshold check — but are wrong. A temp sensor reads 172°C but its correlated pressure and flow sensors say 175°C. No historian catches this." },
-                  { q: "Why call them 'agents' and not 'modules'?", a: "Each agent has its own LLM reasoning layer on top of deterministic logic. The deterministic code is the tool; the LLM is the reasoner. That's the agent pattern — tools do the work, the AI reasons about the output." },
+                   { q: "Why call them 'agents' and not 'modules'?", a: "The Detection and Hypothesis agents are genuine ReAct agents — they have tools and decide which ones to call based on what they find. The Detection agent can call get_tag_profile, check_correlation, check_cross_sensor, etc. The Hypothesis agent can call get_tag_details, get_process_context, and get_similar_anomalies. They reason about what to investigate next, not just apply templates." },
                   { q: "How is this different from Seeq?", a: "Seeq assumes your data is trustworthy and analyzes the process. We question whether the data is trustworthy in the first place. Seeq tells you 'reactor temp is trending up.' We tell you 'the temp sensor is lying — don't trust that Seeq alert.'" },
                   { q: "How is this different from AVEVA PI quality codes?", a: "PI quality codes are per-sensor, per-reading. They flag broken communication, out-of-range, etc. They cannot detect a sensor that's wrong-but-plausible (within range, Good quality code, but contradicted by other sensors). That's what Cross-Sensor Corroboration catches." },
                   { q: "What's cross-sensor corroboration?", a: "A sensor reading that is within normal range, has Good quality code, passes all threshold checks — but is wrong. The sensor is miscalibrated by a few degrees. No individual check catches it. Only cross-referencing correlated sensors catches it." },
