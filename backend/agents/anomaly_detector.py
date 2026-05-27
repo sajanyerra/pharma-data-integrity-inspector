@@ -188,11 +188,16 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         if len(values) < 720:
             return None
         
-        recent_1h = values[-720:]
-        previous_6h = values[-4320:-720]
+        n = len(values)
+        # Adapt window sizes to available data
+        recent_size = min(60, n // 4)   # last ~1 hour (or 60 points at 1-min intervals)
+        previous_size = min(360, n // 2)  # previous ~6 hours
         
-        if len(previous_6h) < 100:
+        if recent_size < 10 or previous_size < 30:
             return None
+        
+        recent_1h = values[-recent_size:]
+        previous_6h = values[-(recent_size + previous_size):-recent_size]
             
         recent_mean = np.mean(recent_1h)
         previous_mean = np.mean(previous_6h)
@@ -217,11 +222,11 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
         return None
     
     def _check_stuck_value(self, tag_id: str, values: np.ndarray, readings: List) -> Dict:
-        """Check 2: Stuck Value - Scan full period with 1h windows"""
-        if len(values) < 720:
+        """Check 2: Stuck Value - Scan full period with adaptive windows"""
+        if len(values) < 60:
             return None
         
-        window_size = 720
+        window_size = min(60, len(values) // 3)
         step = window_size
         for start in range(0, len(values) - window_size + 1, step):
             window = values[start:start + window_size]
@@ -301,12 +306,10 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
     
     def _check_rate_of_change(self, tag_id: str, values: np.ndarray, readings: List, data_type: str) -> Dict:
         """Check 5: Rate-of-Change Violation - Only flag physically impossible changes"""
-        if len(values) < 100:
+        if len(values) < 30:
             return None
         
         diffs = np.diff(values)
-        
-        thresholds = {
             "Temperature": 50,
             "Pressure": 20,
             "Flow": 200,
@@ -402,7 +405,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
                 tag_b, cutoff_time
             )
             
-            if len(readings_a) < 100 or len(readings_b) < 100:
+            if len(readings_a) < 30 or len(readings_b) < 30:
                 continue
             
             vals_a = np.array([float(r["value"]) for r in readings_a])
@@ -424,7 +427,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
             
             correlation_shift = abs(corr_second - corr_first)
             
-            if correlation_shift > 0.6 and n > 200:
+            if correlation_shift > 0.6 and n > 50:
                 anomalies.append({
                     "tag_id": tag_a,
                     "anomaly_type": "correlation_breakdown",
