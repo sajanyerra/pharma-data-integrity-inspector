@@ -36,8 +36,10 @@ logs/
 *.sqlite3
 
 # Reports (generated)
-reports/*.pdf
-reports/*.html
+reports/
+
+# Dev scripts
+start-servers.bat
 
 # Test artifacts
 .pytest_cache/
