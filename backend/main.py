@@ -63,49 +63,54 @@ class RunAnalysisRequest(BaseModel):
     tag_ids: Optional[List[str]] = None
 
 
-async def auto_seed_if_empty():
-    """Seed 24h of historical tag data if tag_readings is empty"""
+_seed_task = None
+
+
+async def _seed_background():
+    """Background task: seed 24h of historical data if tag_readings is empty"""
+    await asyncio.sleep(3)
     from sqlalchemy import text, select, func
-    async with async_session_maker() as session:
-        result = await session.execute(select(func.count()).select_from(TagReading))
-        count = result.scalar()
-        if count > 0:
-            print(f"Database has {count:,} readings — skipping seed")
-            return
-        print("No readings found — seeding 24h of historical data...")
-        simulator = TagSimulator(seed=42)
-        start_time = datetime.utcnow() - timedelta(hours=24)
-        batch_size = 500
-        batch = []
-        inserted = 0
-        for i in range(24 * 3600 // 5):
-            ts = start_time + timedelta(seconds=i * 5)
-            readings = simulator.generate_all_tags(ts)
-            for r in readings:
-                batch.append({
-                    'tag_id': r['tag_id'],
-                    'timestamp': r['timestamp'],
-                    'value': r['value'],
-                    'quality_code': r['quality_code']
-                })
-                if len(batch) >= batch_size:
-                    await session.execute(
-                        text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
-                        batch
-                    )
-                    await session.commit()
-                    inserted += len(batch)
-                    batch = []
-                    if inserted % 5000 == 0:
-                        print(f"  Seeded {inserted:,} readings...")
-        if batch:
-            await session.execute(
-                text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
-                batch
-            )
-            await session.commit()
-            inserted += len(batch)
-        print(f"[OK] Seeded {inserted:,} readings")
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(select(func.count()).select_from(TagReading))
+            count = result.scalar()
+            if count > 0:
+                print(f"Database has {count:,} readings — skipping seed")
+                return
+            print("No readings found — seeding 24h of historical data (1-min intervals)...")
+            simulator = TagSimulator(seed=42)
+            start_time = datetime.utcnow() - timedelta(hours=24)
+            batch_size = 500
+            batch = []
+            inserted = 0
+            for i in range(24 * 60):
+                ts = start_time + timedelta(minutes=i)
+                readings = simulator.generate_all_tags(ts)
+                for r in readings:
+                    batch.append({
+                        'tag_id': r['tag_id'],
+                        'timestamp': r['timestamp'],
+                        'value': r['value'],
+                        'quality_code': r['quality_code']
+                    })
+                    if len(batch) >= batch_size:
+                        await session.execute(
+                            text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
+                            batch
+                        )
+                        await session.commit()
+                        inserted += len(batch)
+                        batch = []
+            if batch:
+                await session.execute(
+                    text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
+                    batch
+                )
+                await session.commit()
+                inserted += len(batch)
+            print(f"[OK] Seeded {inserted:,} readings")
+    except Exception as e:
+        print(f"Seed error: {e}")
 
 
 @asynccontextmanager
@@ -123,7 +128,8 @@ async def lifespan(app: FastAPI):
     print("Starting Pharma Data Integrity Inspector...")
     await init_db()
     print("Database initialized")
-    await auto_seed_if_empty()
+    global _seed_task
+    _seed_task = asyncio.create_task(_seed_background())
     yield
     print("Shutting down...")
 
@@ -156,6 +162,18 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.utcnow()}
+
+
+@app.get("/seeding-status")
+async def seeding_status():
+    """Check if background data seeding is complete"""
+    from sqlalchemy import select, func
+    if _seed_task is not None and not _seed_task.done():
+        return {"status": "seeding", "message": "Historical data is being seeded. Try again in a moment."}
+    async with async_session_maker() as session:
+        result = await session.execute(select(func.count()).select_from(TagReading))
+        count = result.scalar()
+    return {"status": "ready", "readings": count}
 
 
 @app.get("/guardrail/info")
