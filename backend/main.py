@@ -80,15 +80,15 @@ async def _seed_background():
             if count > 0:
                 print(f"Database has {count:,} readings — skipping seed")
                 return
-            print("No readings found — seeding 24h of historical data (5-sec intervals)...")
+            print("No readings found — seeding 24h of historical data (30-sec intervals)...")
             data_start = datetime.utcnow() - timedelta(hours=24)
             simulator = TagSimulator(seed=42, start_time=data_start)
             start_time = data_start
             batch_size = 1000
             batch = []
             inserted = 0
-            for i in range(24 * 720):
-                ts = start_time + timedelta(seconds=i * 5)
+            for i in range(24 * 120):
+                ts = start_time + timedelta(seconds=i * 30)
                 readings = simulator.generate_all_tags(ts)
                 for r in readings:
                     batch.append({
@@ -508,7 +508,7 @@ async def run_analysis(request: RunAnalysisRequest):
 
 @app.post("/reseed")
 async def reseed_data():
-    """Clear and reseed all data with fresh 24h of historical data (5-sec intervals)"""
+    """Clear and reseed all data with fresh 24h of historical data (30-sec intervals)"""
     from sqlalchemy import text as sa_text
     try:
         async with async_session_maker() as session:
@@ -523,8 +523,8 @@ async def reseed_data():
         batch = []
         inserted = 0
         async with async_session_maker() as session:
-            for i in range(24 * 720):
-                ts = start_time + timedelta(seconds=i * 5)
+            for i in range(24 * 120):
+                ts = start_time + timedelta(seconds=i * 30)
                 readings = simulator.generate_all_tags(ts)
                 for r in readings:
                     batch.append({

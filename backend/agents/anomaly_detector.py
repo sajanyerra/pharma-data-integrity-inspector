@@ -63,83 +63,83 @@ class AnomalyDetector(BaseAgent):
             "Conductivity": {"min": 0, "max": 200},
         }
         
+    async def _load_all_readings(self, hours: int) -> Dict[str, Dict]:
+        """Load all tag readings in one query and cache in memory"""
+        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+        all_rows = await self.db_conn.fetch(
+            "SELECT tag_id, value, quality_code, timestamp FROM tag_readings WHERE timestamp >= $1 ORDER BY tag_id, timestamp",
+            cutoff_time
+        )
+        cache = {}
+        for r in all_rows:
+            tag_id = r["tag_id"]
+            if tag_id not in cache:
+                cache[tag_id] = {"values": [], "timestamps": [], "quality_codes": []}
+            if r["value"] is not None:
+                cache[tag_id]["values"].append(float(r["value"]))
+                cache[tag_id]["timestamps"].append(r["timestamp"])
+                cache[tag_id]["quality_codes"].append(r["quality_code"])
+        for tag_id in cache:
+            cache[tag_id]["values"] = np.array(cache[tag_id]["values"])
+        return cache
+
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Apply 11 anomaly detection checks
-        
-        Input: {
-            "tag_profiles": Dict from DataProfiler,
-            "hours": int (default 24)
-        }
-        
-        Output: {
-            "anomalies": List[anomaly_dict],
-            "summary": {...}
-        }
+        Apply 8 active anomaly detection checks with data loaded once.
         """
         await self.connect_db()
-        
+
         try:
             tag_profiles = input_data.get("tag_profiles", {})
             hours = input_data.get("hours", 24)
             anomalies = []
-            
+
             tags_result = await self.db_conn.fetch("SELECT * FROM tags")
             tag_metadata = {row["tag_id"]: dict(row) for row in tags_result}
-            
+
+            data_cache = await self._load_all_readings(hours)
+
             for tag_id, profile in tag_profiles.items():
                 metadata = tag_metadata.get(tag_id, {})
                 data_type = metadata.get("data_type", "Unknown")
-                
-                cutoff_time = datetime.utcnow() - timedelta(hours=hours)
-                readings = await self.db_conn.fetch(
-                    "SELECT value, quality_code, timestamp FROM tag_readings WHERE tag_id = $1 AND timestamp >= $2 ORDER BY timestamp",
-                    tag_id, cutoff_time
-                )
-                values = [float(r["value"]) for r in readings if r["value"] is not None]
-                
-                if len(values) < 10:
+                tag_data = data_cache.get(tag_id)
+                if not tag_data or len(tag_data["values"]) < 10:
                     continue
-                
-                values_array = np.array(values)
-                
+
+                values_array = tag_data["values"]
+                timestamps = tag_data["timestamps"]
+                quality_codes = tag_data["quality_codes"]
+
+                readings_like = [
+                    {"value": v, "quality_code": qc, "timestamp": ts}
+                    for v, qc, ts in zip(values_array, quality_codes, timestamps)
+                ]
+
                 drift_anomaly = self._check_sensor_drift(tag_id, values_array, profile)
                 if drift_anomaly:
                     anomalies.append(drift_anomaly)
-                
-                stuck_anomaly = self._check_stuck_value(tag_id, values_array, readings)
+
+                stuck_anomaly = self._check_stuck_value(tag_id, values_array, readings_like)
                 if stuck_anomaly:
                     anomalies.append(stuck_anomaly)
-                
+
                 impossible_anomaly = self._check_impossible_readings(tag_id, values_array, data_type)
                 if impossible_anomaly:
                     anomalies.append(impossible_anomaly)
-                
-                # quality_anomaly = self._check_quality_mismatch(tag_id, values_array, profile)
-                # if quality_anomaly:
-                #     anomalies.append(quality_anomaly)
-                
-                roc_anomaly = self._check_rate_of_change(tag_id, values_array, readings, data_type)
+
+                roc_anomaly = self._check_rate_of_change(tag_id, values_array, readings_like, data_type)
                 if roc_anomaly:
                     anomalies.append(roc_anomaly)
-                
-                # gap_anomaly = self._check_data_gaps(tag_id, readings)
-                # if gap_anomaly:
-                #     anomalies.append(gap_anomaly)
-                
-                # outlier_anomaly = self._check_statistical_outliers(tag_id, values_array, profile)
-                # if outlier_anomaly:
-                #     anomalies.append(outlier_anomaly)
-            
-            correlation_anomalies = await self._check_correlations(cutoff_time)
+
+            correlation_anomalies = self._check_correlations_cached(data_cache)
             anomalies.extend(correlation_anomalies)
-            
-            pharma_anomalies = await self._check_pharma_specific(cutoff_time)
+
+            pharma_anomalies = await self._check_pharma_specific_cached(data_cache, tag_metadata)
             anomalies.extend(pharma_anomalies)
-            
-            silent_lie_anomalies = await self._check_cross_sensor_consistency(tag_profiles, cutoff_time)
+
+            silent_lie_anomalies = self._check_cross_sensor_consistency_cached(tag_profiles, data_cache)
             anomalies.extend(silent_lie_anomalies)
-            
+
             result = {
                 "anomalies": anomalies,
                 "summary": {
@@ -148,12 +148,12 @@ class AnomalyDetector(BaseAgent):
                     "timestamp": datetime.utcnow().isoformat()
                 }
             }
-            
+
             result["ai_prioritization"] = await self._prioritize_anomalies(anomalies)
-            
+
             await self.save_trace(input_data, result)
             return result
-            
+
         finally:
             await self.disconnect_db()
     
@@ -186,15 +186,13 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
     
     def _check_sensor_drift(self, tag_id: str, values: np.ndarray, profile: Dict) -> Dict:
         """Check 1: Sensor Drift - Compare 1h vs 6h rolling mean"""
-        if len(values) < 720:
+        if len(values) < 120:
             return None
         
         n = len(values)
-        # Use last 1 hour and previous 6 hours of data
-        # At 5-sec intervals: 1h = 720 points, 6h = 4320 points
-        # At 1-min intervals: 1h = 60 points, 6h = 360 points
-        recent_size = min(720, n // 4)   # ~1 hour
-        previous_size = min(4320, n // 2)  # ~6 hours
+        # At 30-sec intervals: 1h = 120 points, 6h = 720 points
+        recent_size = min(120, n // 4)   # ~1 hour
+        previous_size = min(720, n // 2)  # ~6 hours
         
         if recent_size < 30 or previous_size < 100:
             return None
@@ -226,10 +224,10 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
     
     def _check_stuck_value(self, tag_id: str, values: np.ndarray, readings: List) -> Dict:
         """Check 2: Stuck Value - Scan full period with 1h windows"""
-        if len(values) < 360:
+        if len(values) < 120:
             return None
         
-        window_size = min(720, len(values) // 4)  # ~1 hour
+        window_size = min(120, len(values) // 4)  # ~1 hour at 30-sec intervals
         step = window_size
         for start in range(0, len(values) - window_size + 1, step):
             window = values[start:start + window_size]
@@ -396,42 +394,37 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
             }
         return None
     
-    async def _check_correlations(self, cutoff_time: datetime) -> List[Dict]:
-        """Check 8: Correlation Breakdown between related tags"""
+    def _check_correlations_cached(self, data_cache: Dict) -> List[Dict]:
+        """Check 8: Correlation Breakdown using cached data"""
         anomalies = []
-        
+
         for tag_a, tag_b in self.correlated_pairs:
-            readings_a = await self.db_conn.fetch(
-                "SELECT value, timestamp FROM tag_readings WHERE tag_id = $1 AND timestamp >= $2 ORDER BY timestamp",
-                tag_a, cutoff_time
-            )
-            readings_b = await self.db_conn.fetch(
-                "SELECT value, timestamp FROM tag_readings WHERE tag_id = $1 AND timestamp >= $2 ORDER BY timestamp",
-                tag_b, cutoff_time
-            )
-            
-            if len(readings_a) < 30 or len(readings_b) < 30:
+            a_data = data_cache.get(tag_a)
+            b_data = data_cache.get(tag_b)
+            if not a_data or not b_data:
                 continue
-            
-            vals_a = np.array([float(r["value"]) for r in readings_a])
-            vals_b = np.array([float(r["value"]) for r in readings_b])
-            
+
+            vals_a = a_data["values"]
+            vals_b = b_data["values"]
+
+            if len(vals_a) < 30 or len(vals_b) < 30:
+                continue
+
             n = min(len(vals_a), len(vals_b))
             vals_a = vals_a[:n]
             vals_b = vals_b[:n]
-            
+
             if np.std(vals_a) == 0 or np.std(vals_b) == 0:
                 continue
-            
+
             corr, p_value = stats.pearsonr(vals_a, vals_b)
-            
+
             first_half_n = n // 2
-            second_half_n = n - first_half_n
             corr_first, _ = stats.pearsonr(vals_a[:first_half_n], vals_b[:first_half_n])
             corr_second, _ = stats.pearsonr(vals_a[first_half_n:], vals_b[first_half_n:])
-            
+
             correlation_shift = abs(corr_second - corr_first)
-            
+
             if correlation_shift > 0.6 and n > 50:
                 anomalies.append({
                     "tag_id": tag_a,
@@ -449,33 +442,22 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
                     "timestamp": datetime.utcnow().isoformat(),
                     "severity": "high" if correlation_shift > 0.6 else "medium"
                 })
-        
+
         return anomalies
     
-    async def _check_pharma_specific(self, cutoff_time: datetime) -> List[Dict]:
-        """Check 9 & 10: Pharma-specific checks (CIP and FDA audit)"""
+    async def _check_pharma_specific_cached(self, data_cache: Dict, tag_metadata: Dict) -> List[Dict]:
+        """Check 9 & 10: Pharma-specific checks (CIP and FDA audit) using cached data"""
         anomalies = []
-        
-        cip_readings = await self.db_conn.fetch(
-            """
-            SELECT tr.tag_id, tr.value, tr.timestamp
-            FROM tag_readings tr
-            JOIN tags t ON tr.tag_id = t.tag_id
-            WHERE t.unit_type = 'CIP System' AND tr.timestamp >= $1
-            ORDER BY tr.timestamp
-            """,
-            cutoff_time
-        )
-        
+
         cip_by_tag = {}
-        for r in cip_readings:
-            if r["tag_id"] not in cip_by_tag:
-                cip_by_tag[r["tag_id"]] = []
-            cip_by_tag[r["tag_id"]].append(float(r["value"]))
-        
+        for tag_id, tag_data in data_cache.items():
+            meta = tag_metadata.get(tag_id, {})
+            if meta.get("unit_type") == "CIP System":
+                cip_by_tag[tag_id] = tag_data["values"]
+
         if "TI-601" in cip_by_tag:
             temp_values = cip_by_tag["TI-601"]
-            low_temp_count = sum(1 for v in temp_values if v < 70)
+            low_temp_count = int(np.sum(temp_values < 70))
             if low_temp_count > 30:
                 anomalies.append({
                     "tag_id": "TI-601",
@@ -483,127 +465,117 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
                     "confidence": min(0.9, low_temp_count / 100),
                     "evidence": {
                         "low_temp_readings": low_temp_count,
-                        "min_temp": round(min(temp_values), 2),
+                        "min_temp": round(float(np.min(temp_values)), 2),
                         "threshold": 70
                     },
                     "timestamp": datetime.utcnow().isoformat(),
                     "severity": "high",
                     "pharma_impact": "Incomplete cleaning - contamination risk"
                 })
-        
-        tags_result = await self.db_conn.fetch("SELECT tag_id FROM tags")
-        for tag_row in tags_result:
-            tag_id = tag_row["tag_id"]
-            quality_changes = await self.db_conn.fetch(
-                """
-                SELECT quality_code, COUNT(*) as cnt
-                FROM tag_readings
-                WHERE tag_id = $1 AND timestamp >= $2
-                GROUP BY quality_code
-                """,
-                tag_id, cutoff_time
-            )
-            
-            total = sum(r["cnt"] for r in quality_changes)
-            bad_count = sum(r["cnt"] for r in quality_changes if r["quality_code"] not in ["Good", None])
-            
-            if total > 100 and bad_count / total > 0.5:
+
+        quality_agg = await self.db_conn.fetch(
+            """
+            SELECT tag_id, quality_code, COUNT(*) as cnt
+            FROM tag_readings
+            WHERE timestamp >= NOW() - INTERVAL '24 hours'
+            GROUP BY tag_id, quality_code
+            """
+        )
+        tag_quality = {}
+        for r in quality_agg:
+            tid = r["tag_id"]
+            if tid not in tag_quality:
+                tag_quality[tid] = {"total": 0, "bad": 0}
+            tag_quality[tid]["total"] += r["cnt"]
+            if r["quality_code"] not in ("Good", None):
+                tag_quality[tid]["bad"] += r["cnt"]
+
+        for tid, q in tag_quality.items():
+            if q["total"] > 100 and q["bad"] / q["total"] > 0.5:
                 anomalies.append({
-                    "tag_id": tag_id,
+                    "tag_id": tid,
                     "anomaly_type": "fda_audit_trail_concern",
                     "confidence": 0.7,
                     "evidence": {
-                        "non_good_ratio": round(bad_count / total, 3),
-                        "total_readings": total,
-                        "non_good_readings": bad_count
+                        "non_good_ratio": round(q["bad"] / q["total"], 3),
+                        "total_readings": q["total"],
+                        "non_good_readings": q["bad"]
                     },
                     "timestamp": datetime.utcnow().isoformat(),
                     "severity": "high",
                     "pharma_impact": "21 CFR Part 11 compliance concern"
                 })
-        
+
         return anomalies
 
-    async def _check_cross_sensor_consistency(self, tag_profiles: Dict, cutoff_time: datetime) -> List[Dict]:
-        """Check 11: Cross-Sensor Corroboration
-        
-        For each suspect tag, compare its reported behavior against its
-        'witness' sensors (correlated tags). If the witnesses tell a
-        different story than the suspect, the suspect may be lying.
-        """
+    def _check_cross_sensor_consistency_cached(self, tag_profiles: Dict, data_cache: Dict) -> List[Dict]:
+        """Check 11: Cross-Sensor Corroboration using cached data"""
         anomalies = []
-        
+
         for suspect_tag, config in self.cross_sensor_groups.items():
             suspect_profile = tag_profiles.get(suspect_tag)
             if not suspect_profile:
                 continue
-            
-            suspect_readings = await self.db_conn.fetch(
-                "SELECT value, timestamp FROM tag_readings WHERE tag_id = $1 AND timestamp >= $2 ORDER BY timestamp",
-                suspect_tag, cutoff_time
-            )
-            if len(suspect_readings) < 200:
+
+            suspect_data = data_cache.get(suspect_tag)
+            if not suspect_data or len(suspect_data["values"]) < 60:
                 continue
-            
-            suspect_values = np.array([float(r["value"]) for r in suspect_readings])
+
+            suspect_values = suspect_data["values"]
             suspect_mean = float(np.mean(suspect_values))
             suspect_std = float(np.std(suspect_values))
-            
+
             if suspect_std == 0:
                 continue
-            
+
             contradictions = []
-            
+
             for witness_tag, rel in config['relationships'].items():
-                witness_readings = await self.db_conn.fetch(
-                    "SELECT value, timestamp FROM tag_readings WHERE tag_id = $1 AND timestamp >= $2 ORDER BY timestamp",
-                    witness_tag, cutoff_time
-                )
-                if len(witness_readings) < 200:
+                witness_data = data_cache.get(witness_tag)
+                if not witness_data or len(witness_data["values"]) < 60:
                     continue
-                
-                witness_values = np.array([float(r["value"]) for r in witness_readings])
+
+                witness_values = witness_data["values"]
                 witness_mean = float(np.mean(witness_values))
                 witness_std = float(np.std(witness_values))
-                
+
                 if witness_std == 0 or suspect_std == 0:
                     continue
-                
+
                 n = min(len(suspect_values), len(witness_values))
                 s = suspect_values[:n]
                 w = witness_values[:n]
-                
+
                 overall_corr, _ = stats.pearsonr(s, w)
-                
-                window_size = 720  # 1 hour of 5-sec data
-                step = 360
+
+                window_size = 120  # 1 hour at 30-sec intervals
+                step = 60
                 segment_correlations = []
-                
+
                 for start in range(0, n - window_size, step):
                     seg_s = s[start:start + window_size]
                     seg_w = w[start:start + window_size]
                     if np.std(seg_s) > 0 and np.std(seg_w) > 0:
                         seg_corr, _ = stats.pearsonr(seg_s, seg_w)
                         segment_correlations.append(seg_corr)
-                
+
                 if not segment_correlations:
                     continue
-                
-                window_size_det = 720
+
                 first_windows = min(3, len(segment_correlations))
                 baseline_corr = np.mean(segment_correlations[:first_windows]) if first_windows > 0 else overall_corr
                 recent_corr = segment_correlations[-1] if segment_correlations else overall_corr
-                
+
                 correlation_drop = baseline_corr - recent_corr
-                
+
                 if correlation_drop > 0.2 and abs(baseline_corr) > 0.05:
-                    s_recent = suspect_values[-720:]
-                    w_recent = witness_values[-720:]
-                    s_recent_trend = float(np.mean(s_recent[-360:]) - np.mean(s_recent[:360]))
-                    w_recent_trend = float(np.mean(w_recent[-360:]) - np.mean(w_recent[:360]))
-                    
+                    s_recent = suspect_values[-120:]
+                    w_recent = witness_values[-120:]
+                    s_recent_trend = float(np.mean(s_recent[-60:]) - np.mean(s_recent[:60]))
+                    w_recent_trend = float(np.mean(w_recent[-60:]) - np.mean(w_recent[:60]))
+
                     expected_direction = 1 if rel['direction'] == 'same' else -1
-                    
+
                     trends_contradict = False
                     if expected_direction > 0:
                         if (s_recent_trend > 0 and w_recent_trend < -suspect_std * 0.1) or \
@@ -613,7 +585,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
                         if (s_recent_trend > 0 and w_recent_trend > suspect_std * 0.1) or \
                            (s_recent_trend < 0 and w_recent_trend < -suspect_std * 0.1):
                             trends_contradict = True
-                    
+
                     if trends_contradict or correlation_drop > 0.3:
                         contradictions.append({
                             'witness': witness_tag,
@@ -626,16 +598,16 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
                             'trends_contradict': trends_contradict,
                             'expected_direction': rel['direction'],
                         })
-            
+
             if contradictions:
                 confidence = min(0.95, 0.6 + 0.15 * len(contradictions))
                 if any(c['trends_contradict'] for c in contradictions):
                     confidence = min(0.95, confidence + 0.1)
                 if len(contradictions) >= 2:
                     confidence = min(0.95, confidence + 0.05)
-                
+
                 witness_summary = ", ".join(c['witness'] for c in contradictions)
-                
+
                 anomalies.append({
                     "tag_id": suspect_tag,
                     "anomaly_type": "cross_sensor_inconsistency",
@@ -652,7 +624,7 @@ In 2-3 sentences: (1) What does this pattern suggest about the plant? (2) Which 
                     "pharma_impact": f"Sensor {suspect_tag} contradicts {witness_summary} — reading may be plausible but wrong. Risk of incorrect batch decisions.",
                     "is_silent_lie": True,
                 })
-        
+
         return anomalies
     
     def _count_by_type(self, anomalies: List[Dict]) -> Dict[str, int]:

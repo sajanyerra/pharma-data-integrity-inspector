@@ -44,51 +44,47 @@ class DataProfiler(BaseAgent):
         try:
             hours = input_data.get("hours", 24)
             tag_ids = input_data.get("tag_ids", None)
-            
-            # Get all tags
+
+            cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+
+            all_readings = await self.db_conn.fetch(
+                "SELECT tag_id, value, quality_code, timestamp FROM tag_readings WHERE timestamp >= $1 ORDER BY tag_id, timestamp",
+                cutoff_time
+            )
+
+            readings_by_tag = {}
+            for r in all_readings:
+                tid = r["tag_id"]
+                if tid not in readings_by_tag:
+                    readings_by_tag[tid] = []
+                if r["value"] is not None:
+                    readings_by_tag[tid].append(r)
+
             if tag_ids and len(tag_ids) > 0:
-                placeholders = ','.join([f"'{tid}'" for tid in tag_ids])
-                tags_query = f"SELECT tag_id FROM tags WHERE tag_id IN ({placeholders})"
-                tags_result = await self.db_conn.fetch(tags_query)
-            else:
-                tags_result = await self.db_conn.fetch("SELECT tag_id FROM tags")
-            
+                tag_set = set(tag_ids)
+                readings_by_tag = {k: v for k, v in readings_by_tag.items() if k in tag_set}
+
             tag_profiles = {}
-            
-            for tag_row in tags_result:
-                tag_id = tag_row["tag_id"]
-                
-                # Get readings for last N hours
-                cutoff_time = datetime.utcnow() - timedelta(hours=hours)
-                readings = await self.db_conn.fetch(
-                    "SELECT value, quality_code, timestamp FROM tag_readings WHERE tag_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC LIMIT 10000",
-                    tag_id, cutoff_time
-                )
-                
-                if not readings:
-                    continue
-                
-                # Calculate statistics
+
+            for tag_id, readings in readings_by_tag.items():
                 values = [float(r["value"]) for r in readings if r["value"] is not None]
-                
+
                 if not values:
                     continue
-                
+
                 values_array = np.array(values)
-                
-                # Quality code distribution
+
                 quality_codes = {}
                 for r in readings:
                     qc = r["quality_code"] or "Unknown"
                     quality_codes[qc] = quality_codes.get(qc, 0) + 1
-                
-                # Update frequency (readings per hour)
+
                 if len(readings) > 1:
-                    time_span = (readings[0]["timestamp"] - readings[-1]["timestamp"]).total_seconds() / 3600
+                    time_span = (readings[-1]["timestamp"] - readings[0]["timestamp"]).total_seconds() / 3600
                     update_freq = len(readings) / max(time_span, 0.001)
                 else:
                     update_freq = 0
-                
+
                 tag_profiles[tag_id] = {
                     "count": len(values),
                     "min": float(np.min(values_array)),
@@ -100,7 +96,7 @@ class DataProfiler(BaseAgent):
                     "q3": float(np.percentile(values_array, 75)),
                     "quality_codes": quality_codes,
                     "update_frequency_per_hour": round(update_freq, 2),
-                    "data_completeness": round(len(values) / (hours * 3600 / 5) * 100, 2)  # Expected readings based on 5-sec scan
+                    "data_completeness": round(len(values) / (hours * 120) * 100, 2)
                 }
             
             result = {
