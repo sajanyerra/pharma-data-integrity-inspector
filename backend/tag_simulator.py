@@ -161,10 +161,10 @@ class TagSimulator:
         'desc': 'TI-101 miscalibrated: reports 3 deg C LOW. Correlated sensors (PI-101, FI-201, LI-101) contradict the reading.',
     }
 
-    def __init__(self, seed: int = None):
+    def __init__(self, seed: int = None, start_time: datetime = None):
         if seed is not None:
             random.seed(seed)
-        self.start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        self.start_time = start_time or datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         self._prev_values: Dict[str, float] = {}
         self._deviations: Dict[str, float] = {}
         self.ar_coeff = 0.85
