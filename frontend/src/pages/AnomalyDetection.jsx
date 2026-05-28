@@ -49,6 +49,7 @@ export default function AnomalyDetection() {
   const [agentReasoning, setAgentReasoning] = useState('')
   const [investigating, setInvestigating] = useState(false)
   const pollRef = useRef(null)
+  const reasoningRef = useRef(null)
   const navigate = useNavigate()
 
   const fetchAnomalies = async () => {
@@ -70,6 +71,11 @@ export default function AnomalyDetection() {
 
   useEffect(() => { fetchAnomalies() }, [])
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
+  useEffect(() => {
+    if (reasoningRef.current) {
+      reasoningRef.current.scrollTop = reasoningRef.current.scrollHeight
+    }
+  }, [agentReasoning])
 
   const runAnalysis = async () => {
     stopPolling()
@@ -118,7 +124,7 @@ export default function AnomalyDetection() {
     let attempts = 0
     pollRef.current = setInterval(async () => {
       attempts++
-      if (attempts > 80) {
+      if (attempts > 120) {
         stopPolling()
         return
       }
@@ -150,7 +156,7 @@ export default function AnomalyDetection() {
       } catch (err) {
         stopPolling()
       }
-    }, 1500)
+    }, 1200)
   }
 
   const isRunning = analysisPhase !== null
@@ -169,7 +175,7 @@ export default function AnomalyDetection() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Anomaly Detection</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">9 integrity checks applied across 20 tags</p>
+          <p className="text-muted-foreground text-sm mt-0.5">9 integrity checks · random anomalies each run</p>
         </div>
         <div className="flex items-center gap-3">
           <button onClick={runAnalysis} disabled={isRunning} className="btn-primary flex items-center gap-2">
@@ -184,7 +190,7 @@ export default function AnomalyDetection() {
 
       <div className="hint">
         <Info className="w-3.5 h-3.5 shrink-0" />
-        <span>Each detected anomaly includes the specific check that failed, the evidence, and why it matters.</span>
+        <span>Data is reseeded with random anomalies on each run. You can proceed to HITL review while the Investigation Agent works.</span>
       </div>
 
       {/* 9 Checks Grid */}
@@ -216,7 +222,7 @@ export default function AnomalyDetection() {
         </div>
       )}
 
-      {/* Agent Reasoning Panel */}
+      {/* Agent Reasoning Panel — auto-scrolls to bottom */}
       {agentReasoning && (
         <div className="card p-4">
           <div className="flex items-center gap-2 mb-2">
@@ -226,7 +232,7 @@ export default function AnomalyDetection() {
             {!investigating && <span className="text-[10px] text-emerald-600 font-medium">Complete</span>}
             <span className="text-[10px] text-muted-foreground">LLM directs tool calls (Historian, MES, CMMS, LIMS) per anomaly type</span>
           </div>
-          <div className="bg-secondary rounded-lg p-3 max-h-48 overflow-y-auto">
+          <div ref={reasoningRef} className="bg-secondary rounded-lg p-3 max-h-48 overflow-y-auto scroll-smooth">
             <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono">{agentReasoning}</pre>
           </div>
         </div>
@@ -315,11 +321,13 @@ export default function AnomalyDetection() {
         )}
       </div>
 
+      {/* Next step — always shown when anomalies exist, even during investigation */}
       {anomalies.length > 0 && (
         <div className="next-step">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-blue-600" />
             <span className="text-sm font-medium text-foreground">Next: approve or reject anomalies</span>
+            {investigating && <span className="text-[10px] text-muted-foreground">(investigation running in background)</span>}
           </div>
           <button onClick={() => navigate('/hitl')} className="next-step-btn"><ArrowRight className="w-4 h-4" /></button>
         </div>

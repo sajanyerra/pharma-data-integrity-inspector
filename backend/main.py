@@ -87,7 +87,8 @@ async def _seed_background():
                 return
             print("No readings found — seeding 24h of historical data (2-min intervals)...")
             data_start = datetime.utcnow() - timedelta(hours=24)
-            simulator = TagSimulator(seed=42, start_time=data_start)
+            seed = random.randint(1, 999999)
+            simulator = TagSimulator(seed=seed, start_time=data_start)
             start_time = data_start
             batch_size = 1000
             batch = []
@@ -429,16 +430,17 @@ async def select_anomalies_batch(selections: List[AnomalySelection]):
 
 @app.post("/analyze")
 async def run_analysis(request: RunAnalysisRequest):
-    """Run detection synchronously (~3-5s), then start investigation in background with streaming progress."""
+    """Reseed with random anomalies, run detection synchronously (~5s), then investigate in background with streaming progress."""
     from agents.detection_engine import DetectionEngine
     from agents.investigation_agent import InvestigationAgent
     from agents.investigation_tools import set_investigation_context
+    from sqlalchemy import text as sa_text
     import time
 
     job_id = str(uuid.uuid4())[:8]
     _analysis_jobs[job_id] = {
         "status": "detecting",
-        "progress": "Running 9 integrity checks...",
+        "progress": "Reseeding data with random anomalies...",
         "agent_reasoning": "",
         "investigation_findings": [],
         "result": None,
@@ -447,10 +449,33 @@ async def run_analysis(request: RunAnalysisRequest):
 
     try:
         async with async_session_maker() as session:
-            from sqlalchemy import text as sa_text
             await session.execute(sa_text("DELETE FROM anomalies"))
             await session.execute(sa_text("DELETE FROM agent_trace"))
+            await session.execute(sa_text("DELETE FROM tag_readings"))
             await session.commit()
+
+        _analysis_jobs[job_id]["progress"] = "Seeding 24h of sensor data..."
+        seed = random.randint(1, 999999)
+        data_start = datetime.utcnow() - timedelta(hours=24)
+        simulator = TagSimulator(seed=seed, start_time=data_start)
+        batch = []
+        interval = 120
+        total_points = 24 * 30
+        async with async_session_maker() as session:
+            for i in range(total_points):
+                ts = data_start + timedelta(seconds=i * interval)
+                readings = simulator.generate_all_tags(ts)
+                for r in readings:
+                    batch.append({'tag_id': r['tag_id'], 'timestamp': r['timestamp'], 'value': r['value'], 'quality_code': r['quality_code']})
+                    if len(batch) >= 2000:
+                        await session.execute(sa_text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"), batch)
+                        await session.commit()
+                        batch = []
+            if batch:
+                await session.execute(sa_text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"), batch)
+                await session.commit()
+
+        _analysis_jobs[job_id]["progress"] = "Running 9 integrity checks..."
 
         engine = DetectionEngine()
         await engine.connect_db()
@@ -622,7 +647,7 @@ async def run_analysis(request: RunAnalysisRequest):
 
 @app.post("/reseed")
 async def reseed_data():
-    """Clear and reseed all data with fresh 24h of historical data (2-min intervals)"""
+    """Clear and reseed all data with fresh 24h of historical data (2-min intervals) with RANDOM anomalies"""
     from sqlalchemy import text as sa_text
     try:
         async with async_session_maker() as session:
@@ -631,7 +656,8 @@ async def reseed_data():
             await session.execute(sa_text("DELETE FROM tag_readings"))
             await session.commit()
         
-        simulator = TagSimulator(seed=42, start_time=datetime.utcnow() - timedelta(hours=24))
+        seed = random.randint(1, 999999)
+        simulator = TagSimulator(seed=seed, start_time=datetime.utcnow() - timedelta(hours=24))
         start_time = datetime.utcnow() - timedelta(hours=24)
         batch_size = 2000
         batch = []

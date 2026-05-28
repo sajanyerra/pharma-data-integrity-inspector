@@ -158,7 +158,7 @@ class DetectionEngine(BaseAgent):
             prio = {"cross_sensor_inconsistency": 0, "sensor_drift": 1, "stuck_value": 2,
                      "noise_burst": 3, "rate_of_change_violation": 4, "correlation_breakdown": 5,
                      "impossible_readings": 6, "cip_temperature_low": 7, "fda_audit_trail_concern": 8}
-            final = sorted(best.values(), key=lambda a: (prio.get(a.get("anomaly_type", ""), 9), -float(a.get("confidence", 0))))[:4]
+            final = sorted(best.values(), key=lambda a: (prio.get(a.get("anomaly_type", ""), 9), -float(a.get("confidence", 0))))[:2]
 
             result = {
                 "anomalies": final,
