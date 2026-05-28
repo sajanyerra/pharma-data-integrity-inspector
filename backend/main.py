@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 import asyncio
 import json
+import random
 import uuid
 
 from database import init_db, get_db, async_session_maker
