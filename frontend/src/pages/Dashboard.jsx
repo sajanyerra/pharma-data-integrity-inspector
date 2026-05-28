@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Activity, AlertTriangle, Thermometer, Gauge, Droplet, Waves, ArrowRight, BarChart3, FileText, ShieldCheck, Play, ChevronRight, RotateCcw, Eye, Shield, Zap, Search, Brain } from 'lucide-react'
+import { Activity, AlertTriangle, Thermometer, Gauge, Droplet, Waves, ArrowRight, BarChart3, FileText, ShieldCheck, Play, ChevronRight, RotateCcw, Eye, Shield, Zap, Search, Brain, ChevronDown } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 
@@ -56,7 +56,7 @@ export default function Dashboard({ liveTags = [] }) {
     <div className="space-y-5">
       {/* Hero — compact title + CTA */}
       <div className="card p-4 bg-gradient-to-br from-slate-700 to-slate-800 text-white border-0">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-bold">Process Data Integrity Inspector</h1>
             <p className="text-slate-300 text-xs">Catches sensor anomalies — including ones that look normal but are wrong.</p>
@@ -74,10 +74,39 @@ export default function Dashboard({ liveTags = [] }) {
         </div>
       </div>
 
-      {/* Pipeline Flow — the main explainer */}
-      <div className="card p-5">
+      {/* Pipeline Flow — vertical on mobile, horizontal on desktop */}
+      <div className="card p-4 sm:p-5">
         <h2 className="text-sm font-bold text-foreground mb-4">5-Stage Pipeline</h2>
-        <div className="flex items-start justify-center gap-0">
+        {/* Mobile: vertical timeline */}
+        <div className="flex flex-col gap-3 sm:hidden">
+          {stages.map((s, i) => {
+            const Icon = s.icon
+            return (
+              <div key={s.label} className="flex items-start gap-3">
+                <div className="flex flex-col items-center">
+                  <div className={`w-10 h-10 ${s.color} rounded-xl flex items-center justify-center shadow-md ring-2 ${s.ring}`}>
+                    <Icon className="w-5 h-5 text-white" />
+                  </div>
+                  {i < stages.length - 1 && (
+                    <div className="w-0.5 h-4 bg-border my-0.5" />
+                  )}
+                </div>
+                <div className="pt-1.5">
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-bold text-foreground">{s.label}</p>
+                    <span className="text-[10px] font-semibold text-muted-foreground bg-secondary px-1.5 py-0.5 rounded">{s.sub}</span>
+                    {(i === 1 || i === 3) && (
+                      <span className="flex items-center gap-0.5"><Shield className="w-2.5 h-2.5 text-emerald-500" /><span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-semibold">Guardrail</span></span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">{s.desc}</p>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        {/* Desktop: horizontal flow */}
+        <div className="hidden sm:flex items-start justify-center gap-0">
           {stages.map((s, i) => {
             const Icon = s.icon
             return (
@@ -108,7 +137,7 @@ export default function Dashboard({ liveTags = [] }) {
       </div>
 
       {/* Key features — 3 compact cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div className="relative rounded-lg overflow-hidden border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900">
           <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-indigo-500" />
           <div className="p-3 pl-4 flex items-start gap-2.5">
@@ -118,9 +147,9 @@ export default function Dashboard({ liveTags = [] }) {
             <div>
               <div className="flex items-center gap-1.5">
                 <p className="text-xs font-bold text-foreground">Cross-Sensor Corroboration</p>
-                <span className="text-[8px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300 px-1 py-0.5 rounded">Novel</span>
+                <span className="text-[8px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300 px-1 py-0.5 rounded hidden sm:inline">Novel</span>
               </div>
-              <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">Catches sensors that read within range but contradict their physically-coupled witnesses.</p>
+              <p className="text-[11px] sm:text-[10px] text-muted-foreground mt-0.5 leading-relaxed">Catches sensors that read within range but contradict their physically-coupled witnesses.</p>
             </div>
           </div>
         </div>
@@ -132,7 +161,7 @@ export default function Dashboard({ liveTags = [] }) {
             </div>
             <div>
               <p className="text-xs font-bold text-foreground">Human-in-the-Loop Gate</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">You approve AI investigation findings before root cause analysis. FDA 21 CFR Part 11 aligned.</p>
+              <p className="text-[11px] sm:text-[10px] text-muted-foreground mt-0.5 leading-relaxed">You approve AI investigation findings before root cause analysis. FDA 21 CFR Part 11 aligned.</p>
             </div>
           </div>
         </div>
@@ -144,7 +173,7 @@ export default function Dashboard({ liveTags = [] }) {
             </div>
             <div>
               <p className="text-xs font-bold text-foreground">Output Guardrail</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">PII, credentials, and dangerous recommendations are blocked before any AI output reaches you.</p>
+              <p className="text-[11px] sm:text-[10px] text-muted-foreground mt-0.5 leading-relaxed">PII, credentials, and dangerous recommendations are blocked before any AI output reaches you.</p>
             </div>
           </div>
         </div>
@@ -163,13 +192,13 @@ export default function Dashboard({ liveTags = [] }) {
         <div className="flex gap-1 overflow-x-auto pb-1.5 mb-2">
           {unitTypes.map(unit => (
             <button key={unit} onClick={() => setSelectedUnit(unit)}
-              className={`px-2 py-0.5 rounded text-[10px] font-medium whitespace-nowrap transition-colors ${selectedUnit === unit ? 'bg-slate-700 text-white dark:bg-slate-500' : 'bg-secondary text-muted-foreground hover:text-foreground'}`}>
+              className={`px-2.5 py-1 sm:px-2 sm:py-0.5 rounded text-[11px] sm:text-[10px] font-medium whitespace-nowrap transition-colors ${selectedUnit === unit ? 'bg-slate-700 text-white dark:bg-slate-500' : 'bg-secondary text-muted-foreground hover:text-foreground'}`}>
               {unit === 'all' ? 'All' : unit}
             </button>
           ))}
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-1.5">
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-1.5">
           {filteredTags.length === 0 ? (
             <div className="col-span-full card p-6 text-center">
               <Activity className="w-6 h-6 text-muted-foreground mx-auto mb-1.5" />
@@ -189,10 +218,10 @@ export default function Dashboard({ liveTags = [] }) {
                   </div>
                   <div className="flex items-baseline gap-0.5">
                     <span className="text-base font-bold text-foreground">{typeof tag.value === 'number' ? tag.value.toFixed(1) : tag.value}</span>
-                    <span className="text-[9px] text-muted-foreground">{tag.unit}</span>
+                    <span className="text-[10px] text-muted-foreground">{tag.unit}</span>
                   </div>
                   {tag.is_anomaly && (
-                    <span className="text-[8px] text-amber-600 dark:text-amber-400 font-bold mt-0.5 block">{tag.anomaly_type.replace(/_/g, ' ')}</span>
+                    <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold mt-0.5 block">{tag.anomaly_type.replace(/_/g, ' ')}</span>
                   )}
                 </div>
               )

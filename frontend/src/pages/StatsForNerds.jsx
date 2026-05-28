@@ -21,20 +21,6 @@ const SECTION_ICON = {
   faq: BookOpen,
 }
 
-const CELL_COLORS = [
-  { bg: 'bg-blue-900', text: 'text-blue-100' },
-  { bg: 'bg-blue-700', text: 'text-blue-100' },
-  { bg: 'bg-blue-500', text: 'text-white' },
-  { bg: 'bg-blue-300', text: 'text-blue-900' },
-  { bg: 'bg-blue-100', text: 'text-blue-900' },
-  { bg: 'bg-gray-100 dark:bg-gray-800', text: 'text-gray-400' },
-  { bg: 'bg-red-100', text: 'text-red-900' },
-  { bg: 'bg-red-300', text: 'text-red-900' },
-  { bg: 'bg-red-500', text: 'text-white' },
-  { bg: 'bg-red-700', text: 'text-red-100' },
-  { bg: 'bg-red-900', text: 'text-red-100' },
-]
-
 function correlationToColor(r) {
   if (r === null || r === undefined) return { bg: 'bg-gray-100 dark:bg-gray-800', text: 'text-gray-400 dark:text-gray-500' }
   const abs = Math.abs(r)
@@ -78,67 +64,97 @@ function CorrelationMatrix({ correlations }) {
     return m
   }, [correlations, allTags])
 
-  const tagShort = (t) => t
+  const significantPairs = useMemo(() => {
+    return correlations
+      .filter(c => c.correlation !== null && Math.abs(c.correlation) > 0.5)
+      .sort((a, b) => Math.abs(b.correlation) - Math.abs(a.correlation))
+  }, [correlations])
 
   return (
-    <div className="overflow-x-auto">
-      <div className="min-w-fit">
-        <div className="flex items-center gap-1 mb-2 justify-end">
-          <span className="text-[10px] text-muted-foreground">Correlation</span>
-          <div className="flex gap-0.5">
-            {[
-              { label: '-1', bg: 'bg-red-700', text: 'text-red-100' },
-              { label: '0', bg: 'bg-gray-200 dark:bg-gray-700', text: 'text-gray-600 dark:text-gray-300' },
-              { label: '+1', bg: 'bg-blue-700', text: 'text-blue-100' },
-            ].map(s => (
-              <div key={s.label} className={`w-6 h-4 ${s.bg} ${s.text} flex items-center justify-center text-[8px] font-bold rounded-sm`}>{s.label}</div>
-            ))}
+    <div>
+      {/* Desktop: NxN table */}
+      <div className="hidden md:block overflow-x-auto">
+        <div className="min-w-fit">
+          <div className="flex items-center gap-1 mb-2 justify-end">
+            <span className="text-[10px] text-muted-foreground">Correlation</span>
+            <div className="flex gap-0.5">
+              {[
+                { label: '-1', bg: 'bg-red-700', text: 'text-red-100' },
+                { label: '0', bg: 'bg-gray-200 dark:bg-gray-700', text: 'text-gray-600 dark:text-gray-300' },
+                { label: '+1', bg: 'bg-blue-700', text: 'text-blue-100' },
+              ].map(s => (
+                <div key={s.label} className={`w-6 h-4 ${s.bg} ${s.text} flex items-center justify-center text-[8px] font-bold rounded-sm`}>{s.label}</div>
+              ))}
+            </div>
+          </div>
+          <table className="border-collapse text-[10px]">
+            <thead>
+              <tr>
+                <th className="p-0.5 text-left text-[10px] font-mono text-muted-foreground"></th>
+                {allTags.map(t => (
+                  <th key={t} className="p-0.5 text-center font-mono text-muted-foreground whitespace-nowrap" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', height: '60px' }}>
+                    <span className="text-[9px]">{t}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {allTags.map(rowTag => (
+                <tr key={rowTag}>
+                  <td className="p-0.5 text-right font-mono text-muted-foreground whitespace-nowrap pr-1">{rowTag}</td>
+                  {allTags.map(colTag => {
+                    const cell = matrix[rowTag]?.[colTag]
+                    const r = cell?.correlation
+                    const isDiag = rowTag === colTag
+                    const isData = cell !== null && cell !== undefined
+                    const colors = isDiag ? { bg: 'bg-gray-300 dark:bg-gray-600', text: 'text-gray-700 dark:text-gray-300' } : correlationToColor(r)
+                    return (
+                      <td
+                        key={colTag}
+                        className={`p-0.5 ${colors.bg} ${colors.text} text-center font-mono rounded-sm border border-white dark:border-gray-900`}
+                        title={isData && !isDiag ? `${rowTag} ↔ ${colTag}\nr = ${r !== null ? r.toFixed(4) : 'N/A'}${cell?.p_value !== null && cell?.p_value !== undefined ? `\np = ${cell.p_value < 0.001 ? '<0.001' : cell.p_value.toFixed(4)}` : ''}\nn = ${cell?.n || 'N/A'}` : (isDiag ? 'Diagonal (r=1.0)' : 'No data')}
+                      >
+                        <div className="w-8 h-6 flex items-center justify-center text-[10px] font-semibold">
+                          {isDiag ? '—' : (r !== null && r !== undefined ? r.toFixed(2) : '·')}
+                        </div>
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="flex flex-wrap items-center gap-3 mt-3 text-[10px] text-muted-foreground">
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-600 dark:bg-blue-700 inline-block" /> Strong positive (r &gt; 0.7)</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-600 dark:bg-red-700 inline-block" /> Strong negative (r &lt; -0.7)</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-gray-200 dark:bg-gray-700 inline-block" /> No data</span>
           </div>
         </div>
-        <table className="border-collapse text-[10px]">
-          <thead>
-            <tr>
-              <th className="p-0.5 text-left text-[10px] font-mono text-muted-foreground"></th>
-              {allTags.map(t => (
-                <th key={t} className="p-0.5 text-center font-mono text-muted-foreground whitespace-nowrap" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', height: '60px' }}>
-                  <span className="text-[9px]">{tagShort(t)}</span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {allTags.map(rowTag => (
-              <tr key={rowTag}>
-                <td className="p-0.5 text-right font-mono text-muted-foreground whitespace-nowrap pr-1">{tagShort(rowTag)}</td>
-                {allTags.map(colTag => {
-                  const cell = matrix[rowTag]?.[colTag]
-                  const r = cell?.correlation
-                  const isDiag = rowTag === colTag
-                  const isData = cell !== null && cell !== undefined
-                  const colors = isDiag ? { bg: 'bg-gray-300 dark:bg-gray-600', text: 'text-gray-700 dark:text-gray-300' } : correlationToColor(r)
-                  return (
-                    <td
-                      key={colTag}
-                      className={`p-0.5 ${colors.bg} ${colors.text} text-center font-mono rounded-sm border border-white dark:border-gray-900`}
-                      title={isData && !isDiag ? `${tagShort(rowTag)} ↔ ${tagShort(colTag)}\nr = ${r !== null ? r.toFixed(4) : 'N/A'}${cell?.p_value !== null && cell?.p_value !== undefined ? `\np = ${cell.p_value < 0.001 ? '<0.001' : cell.p_value.toFixed(4)}` : ''}\nn = ${cell?.n || 'N/A'}` : (isDiag ? 'Diagonal (r=1.0)' : 'No data')}
-                    >
-                      <div className="w-8 h-6 flex items-center justify-center text-[10px] font-semibold">
-                        {isDiag ? '—' : (r !== null && r !== undefined ? r.toFixed(2) : '·')}
-                      </div>
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="flex items-center gap-3 mt-3 text-[10px] text-muted-foreground">
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-600 dark:bg-blue-700 inline-block" /> Strong positive (r &gt; 0.7)</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-600 dark:bg-red-700 inline-block" /> Strong negative (r &lt; -0.7)</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-gray-200 dark:bg-gray-700 inline-block" /> No data</span>
-        </div>
-        <p className="text-[10px] text-muted-foreground mt-2">Pearson r computed from last 24h of stored tag_readings (LIMIT 2000 per pair). Hover cells for p-value and sample size.</p>
       </div>
+      {/* Mobile: list of significant pairs */}
+      <div className="md:hidden">
+        <p className="text-xs text-muted-foreground mb-2">Significant correlations (|r| &gt; 0.5)</p>
+        <div className="space-y-1.5">
+          {significantPairs.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No significant correlations found</p>
+          ) : (
+            significantPairs.map((c, i) => {
+              const colors = correlationToColor(c.correlation)
+              return (
+                <div key={i} className={`flex items-center justify-between p-2 rounded-lg ${colors.bg} ${colors.text}`}>
+                  <span className="text-xs font-mono font-medium truncate mr-2">{c.tag_a} ↔ {c.tag_b}</span>
+                  <span className="text-sm font-bold shrink-0">r = {c.correlation.toFixed(3)}</span>
+                </div>
+              )
+            })
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 mt-3 text-[10px] text-muted-foreground">
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-600 inline-block" /> Positive</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-600 inline-block" /> Negative</span>
+        </div>
+      </div>
+      <p className="text-[10px] sm:text-[10px] text-muted-foreground mt-2">Pearson r computed from last 24h of stored tag_readings (LIMIT 2000 per pair). Hover cells for p-value and sample size.</p>
     </div>
   )
 }
@@ -192,15 +208,15 @@ export default function StatsForNerds() {
       </div>
 
       {/* SILENT LIE — hero section */}
-      <div className="card p-5 border-2 border-indigo-300 dark:border-indigo-700 relative overflow-hidden">
+      <div className="card p-4 sm:p-5 border-2 border-indigo-300 dark:border-indigo-700 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500" />
         <div className="pl-3">
           <div className="flex items-center gap-2 mb-3">
             <Eye className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
             <h2 className="text-base font-bold text-foreground">Cross-Sensor Corroboration</h2>
-            <span className="text-[10px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300 px-1.5 py-0.5 rounded">Novel</span>
+            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300 px-1.5 py-0.5 rounded">Novel</span>
           </div>
-          <div className="bg-white dark:bg-slate-800 p-3 rounded-lg mb-3 text-xs space-y-1.5">
+          <div className="bg-white dark:bg-slate-800 p-3 rounded-lg mb-3 text-xs sm:text-xs space-y-1.5">
             <p className="text-foreground font-semibold">Your temp sensor reads 172°C. Normal range, Good quality code, passes every check. But the pressure and flow sensors contradict it — the real temperature is 175°C.</p>
             <p className="text-amber-700 dark:text-amber-400 font-semibold">The sensor is wrong by 3°C. Cross-sensor corroboration catches what threshold checks miss.</p>
           </div>
@@ -217,9 +233,9 @@ export default function StatsForNerds() {
         </div>
       </div>
 
-      {/* 11 Integrity Checks */}
+      {/* 9 Integrity Checks */}
       <div className="card overflow-hidden">
-        <button onClick={() => toggle('checks')} className="w-full px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
+        <button onClick={() => toggle('checks')} className="w-full px-4 sm:px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
           <div className="flex items-center gap-2">
             <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
             <h2 className="text-sm font-bold text-foreground">9 Integrity Checks</h2>
@@ -230,18 +246,18 @@ export default function StatsForNerds() {
         <AnimatePresence>
           {expanded.checks && (
             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
-              <div className="px-5 pb-4 space-y-2">
+              <div className="px-4 sm:px-5 pb-4 space-y-2">
           {checks.map(c => (
               <div key={c.id} className={`p-3 rounded-lg border ${c.is_novel ? 'border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/10' : 'border-border bg-secondary'}`}>
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex flex-wrap items-center gap-2 mb-1">
                   <span className="text-[10px] font-bold text-muted-foreground w-5">#{c.id}</span>
                   <span className="text-xs font-semibold text-foreground">{c.name}</span>
                   {c.is_novel && <span className="text-[9px] font-bold uppercase tracking-wider bg-indigo-200 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300 px-1 py-0.5 rounded">Novel</span>}
                 </div>
-                <p className="text-[11px] text-muted-foreground mb-0.5"><strong className="text-foreground">Detects:</strong> {c.detects}</p>
-                <p className="text-[11px] text-muted-foreground mb-0.5"><strong className="text-foreground">Method:</strong> {c.method}</p>
-                <p className="text-[11px] text-muted-foreground"><strong className="text-foreground">Threshold:</strong> {c.threshold}</p>
-                {c.is_novel && <p className="text-[11px] text-indigo-700 dark:text-indigo-300 mt-1">{c.why_novel}</p>}
+                <p className="text-xs sm:text-[11px] text-muted-foreground mb-0.5"><strong className="text-foreground">Detects:</strong> {c.detects}</p>
+                <p className="text-xs sm:text-[11px] text-muted-foreground mb-0.5"><strong className="text-foreground">Method:</strong> {c.method}</p>
+                <p className="text-xs sm:text-[11px] text-muted-foreground"><strong className="text-foreground">Threshold:</strong> {c.threshold}</p>
+                {c.is_novel && <p className="text-xs sm:text-[11px] text-indigo-700 dark:text-indigo-300 mt-1">{c.why_novel}</p>}
               </div>
             ))}
               </div>
@@ -250,9 +266,9 @@ export default function StatsForNerds() {
         </AnimatePresence>
       </div>
 
-      {/* Correlation Matrix — proper NxN grid */}
+      {/* Correlation Matrix */}
       <div className="card overflow-hidden">
-        <button onClick={() => toggle('correlations')} className="w-full px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
+        <button onClick={() => toggle('correlations')} className="w-full px-4 sm:px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
           <div className="flex items-center gap-2">
             <Link2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />
             <h2 className="text-sm font-bold text-foreground">Live Correlation Matrix</h2>
@@ -263,7 +279,7 @@ export default function StatsForNerds() {
         <AnimatePresence>
           {expanded.correlations && (
             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
-              <div className="px-5 pb-4">
+              <div className="px-4 sm:px-5 pb-4">
                 <CorrelationMatrix correlations={correlations} />
               </div>
             </motion.div>
@@ -273,7 +289,7 @@ export default function StatsForNerds() {
 
       {/* Causal Groups */}
       <div className="card overflow-hidden">
-        <button onClick={() => toggle('causal')} className="w-full px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
+        <button onClick={() => toggle('causal')} className="w-full px-4 sm:px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-green-600 dark:text-green-400" />
             <h2 className="text-sm font-bold text-foreground">Causal Group Model</h2>
@@ -284,7 +300,7 @@ export default function StatsForNerds() {
         <AnimatePresence>
           {expanded.causal && causalGroups && (
             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
-              <div className="px-5 pb-4 space-y-3">
+              <div className="px-4 sm:px-5 pb-4 space-y-3">
                 <p className="text-xs text-muted-foreground mb-2">Tags within the same equipment unit are causally coupled. When one deviates, the others respond according to physics. The coupling coefficients determine the strength and direction of the response.</p>
                 {Object.entries(causalGroups.causal_groups).filter(([k]) => k !== '_cross_group').map(([name, group]) => (
                   <div key={name} className="p-3 rounded-lg border border-border bg-secondary">
@@ -295,10 +311,10 @@ export default function StatsForNerds() {
                       ))}
                     </div>
                     {Object.entries(group.couplings).map(([key, coupling]) => (
-                      <div key={key} className="ml-2 mb-1.5 flex items-start gap-2">
+                      <div key={key} className="ml-2 mb-1.5 flex flex-col sm:flex-row sm:items-start gap-0.5 sm:gap-2">
                         <span className="text-[10px] font-mono text-muted-foreground">{key}</span>
-                        <span className="text-[11px] text-foreground">coeff={coupling.coeff}</span>
-                        <span className="text-[10px] text-muted-foreground italic">{coupling.desc}</span>
+                        <span className="text-xs sm:text-[11px] text-foreground">coeff={coupling.coeff}</span>
+                        <span className="text-[11px] sm:text-[10px] text-muted-foreground italic">{coupling.desc}</span>
                       </div>
                     ))}
                   </div>
@@ -307,10 +323,10 @@ export default function StatsForNerds() {
                   <div className="p-3 rounded-lg border border-dashed border-border bg-secondary">
                     <h3 className="text-xs font-bold text-foreground mb-2">Cross-Group Couplings</h3>
                     {Object.entries(causalGroups.causal_groups._cross_groups).map(([key, coupling]) => (
-                      <div key={key} className="ml-2 mb-1.5 flex items-start gap-2">
+                      <div key={key} className="ml-2 mb-1.5 flex flex-col sm:flex-row sm:items-start gap-0.5 sm:gap-2">
                         <span className="text-[10px] font-mono text-muted-foreground">{key}</span>
-                        <span className="text-[11px] text-foreground">coeff={coupling.coeff}</span>
-                        <span className="text-[10px] text-muted-foreground italic">{coupling.desc}</span>
+                        <span className="text-xs sm:text-[11px] text-foreground">coeff={coupling.coeff}</span>
+                        <span className="text-[11px] sm:text-[10px] text-muted-foreground italic">{coupling.desc}</span>
                         <span className="text-[9px] text-muted-foreground">({coupling.source_group} → {coupling.target_group})</span>
                       </div>
                     ))}
@@ -324,7 +340,7 @@ export default function StatsForNerds() {
 
       {/* Tech Stack */}
       <div className="card overflow-hidden">
-        <button onClick={() => toggle('techstack')} className="w-full px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
+        <button onClick={() => toggle('techstack')} className="w-full px-4 sm:px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-amber-600 dark:text-amber-400" />
             <h2 className="text-sm font-bold text-foreground">Tech Stack</h2>
@@ -335,16 +351,16 @@ export default function StatsForNerds() {
         <AnimatePresence>
           {expanded.techstack && (
             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
-              <div className="px-5 pb-4 space-y-4">
+              <div className="px-4 sm:px-5 pb-4 space-y-4">
                 <p className="text-xs text-muted-foreground">Every technology that makes this work — from LLM orchestration to the output guardrail. No black boxes.</p>
                 {techStack.map((category) => (
                   <div key={category.category}>
                     <h3 className="text-xs font-bold text-foreground mb-2">{category.category}</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {category.items.map((item) => (
                         <div key={item.name} className="p-2.5 rounded-lg border border-border bg-secondary">
                           <p className="text-xs font-semibold text-foreground">{item.name}</p>
-                          <p className="text-[11px] text-muted-foreground mt-0.5">{item.role}</p>
+                          <p className="text-xs sm:text-[11px] text-muted-foreground mt-0.5">{item.role}</p>
                         </div>
                       ))}
                     </div>
@@ -358,7 +374,7 @@ export default function StatsForNerds() {
 
       {/* Pipeline Architecture */}
       <div className="card overflow-hidden">
-        <button onClick={() => toggle('pipeline')} className="w-full px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
+        <button onClick={() => toggle('pipeline')} className="w-full px-4 sm:px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
           <div className="flex items-center gap-2">
             <Cpu className="w-4 h-4 text-orange-600 dark:text-orange-400" />
             <h2 className="text-sm font-bold text-foreground">Pipeline Architecture</h2>
@@ -368,7 +384,7 @@ export default function StatsForNerds() {
         <AnimatePresence>
           {expanded.pipeline && pipeline && (
             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
-              <div className="px-5 pb-4 space-y-3">
+              <div className="px-4 sm:px-5 pb-4 space-y-3">
                 <div className="p-3 rounded-lg bg-secondary">
                   <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1">Orchestration</p>
                   <p className="text-xs text-foreground">{pipeline.orchestration}</p>
@@ -380,8 +396,8 @@ export default function StatsForNerds() {
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-bold text-foreground">Stage {a.id}: {a.name}</span>
                       </div>
-                      <p className="text-[10px] text-muted-foreground mb-1"><strong className="text-foreground">Engine:</strong> {a.engine}</p>
-                      <p className="text-[10px] text-muted-foreground"><strong className="text-foreground">Flow:</strong> {a.flow}</p>
+                      <p className="text-[10px] sm:text-[10px] text-muted-foreground mb-1"><strong className="text-foreground">Engine:</strong> {a.engine}</p>
+                      <p className="text-[10px] sm:text-[10px] text-muted-foreground"><strong className="text-foreground">Flow:</strong> {a.flow}</p>
                     </div>
                   ))}
                 </div>
@@ -393,10 +409,10 @@ export default function StatsForNerds() {
                   </div>
                   <ul className="space-y-0.5">
                     {pipeline.guardrail.checks.map((c, i) => (
-                      <li key={i} className="text-[10px] text-muted-foreground">&#8226; {c}</li>
+                      <li key={i} className="text-xs sm:text-[10px] text-muted-foreground">&#8226; {c}</li>
                     ))}
                   </ul>
-                  <p className="text-[10px] text-muted-foreground mt-1">Applied to: {pipeline.guardrail.applied_to.join(', ')}</p>
+                  <p className="text-xs sm:text-[10px] text-muted-foreground mt-1">Applied to: {pipeline.guardrail.applied_to.join(', ')}</p>
                 </div>
 
                 <div className="p-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10">
@@ -404,8 +420,8 @@ export default function StatsForNerds() {
                     <Unlock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
                     <p className="text-xs font-bold text-foreground">Human-in-the-Loop Gate</p>
                   </div>
-                  <p className="text-[10px] text-muted-foreground mb-1">{pipeline.hitl.purpose}</p>
-                  <p className="text-[10px] text-muted-foreground">Position: {pipeline.hitl.position}</p>
+                  <p className="text-xs sm:text-[10px] text-muted-foreground mb-1">{pipeline.hitl.purpose}</p>
+                  <p className="text-xs sm:text-[10px] text-muted-foreground">Position: {pipeline.hitl.position}</p>
                 </div>
               </div>
             </motion.div>
@@ -415,7 +431,7 @@ export default function StatsForNerds() {
 
       {/* FAQ */}
       <div className="card overflow-hidden">
-        <button onClick={() => toggle('faq')} className="w-full px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
+        <button onClick={() => toggle('faq')} className="w-full px-4 sm:px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
           <div className="flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
             <h2 className="text-sm font-bold text-foreground">FAQ</h2>
@@ -425,7 +441,7 @@ export default function StatsForNerds() {
         <AnimatePresence>
           {expanded.faq && (
             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
-              <div className="px-5 pb-4 space-y-3">
+              <div className="px-4 sm:px-5 pb-4 space-y-3">
                 {[
                    { q: "What is Cross-Sensor Corroboration?", a: "Check 9. It catches sensors that read within normal range, pass quality codes, and pass every threshold check — but are wrong. A temp sensor reads 172°C but its correlated pressure and flow sensors say 175°C. No historian catches this." },
                    { q: "Why call some components 'agents' and others not?", a: "Only 2 components are genuine AI agents. The Investigation Agent uses LLM-directed tool calling with 4 tools (Historian, MES, CMMS, LIMS) — the LLM decides which tools to call per anomaly. The Hypothesis Agent is a single LLM call. The Detection Engine is deterministic code (no LLM, no tools) — calling it an 'agent' would be misleading since it has no autonomy." },
@@ -441,7 +457,7 @@ export default function StatsForNerds() {
                 ].map((item, i) => (
                   <div key={i} className="p-3 rounded-lg border border-border">
                     <p className="text-xs font-semibold text-foreground mb-1">{item.q}</p>
-                    <p className="text-[11px] text-muted-foreground">{item.a}</p>
+                    <p className="text-xs text-muted-foreground">{item.a}</p>
                   </div>
                 ))}
               </div>

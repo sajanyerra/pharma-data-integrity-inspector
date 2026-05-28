@@ -172,18 +172,18 @@ export default function AnomalyDetection() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Anomaly Detection</h1>
           <p className="text-muted-foreground text-sm mt-0.5">9 integrity checks · random anomalies each run</p>
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={runAnalysis} disabled={isRunning} className="btn-primary flex items-center gap-2">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <button onClick={runAnalysis} disabled={isRunning} className="btn-primary flex items-center gap-2 text-sm">
             <RefreshCw className={`w-4 h-4 ${isRunning ? 'animate-spin' : ''}`} />
             {phaseLabel || 'Run Analysis'}
           </button>
-          <button onClick={async () => { try { await axios.delete(`${API_BASE}/anomalies/clear`); await fetchAnomalies(); setAgentReasoning('') } catch {} }} className="btn-secondary flex items-center gap-2">
-            <Trash className="w-4 h-4" />Clear
+          <button onClick={async () => { try { await axios.delete(`${API_BASE}/anomalies/clear`); await fetchAnomalies(); setAgentReasoning('') } catch {} }} className="btn-secondary flex items-center gap-2 text-sm">
+            <Trash className="w-4 h-4" /><span className="hidden sm:inline">Clear</span>
           </button>
         </div>
       </div>
@@ -200,11 +200,11 @@ export default function AnomalyDetection() {
           <ChevronRight className={`w-4 h-4 text-muted-foreground transition-transform ${showChecks ? 'rotate-90' : ''}`} />
         </button>
         {showChecks && (
-          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="mt-3 grid grid-cols-2 md:grid-cols-5 gap-2">
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2">
             {CHECKS.map((c, i) => (
-              <div key={i} className={`flex items-start gap-2 p-2 rounded-lg ${c.novel ? 'bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-200 dark:border-indigo-800' : 'bg-secondary'}`}>
+              <div key={i} className={`flex items-start gap-2 p-2.5 sm:p-2 rounded-lg ${c.novel ? 'bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-200 dark:border-indigo-800' : 'bg-secondary'}`}>
                 {c.novel ? <Eye className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 mt-0.5 shrink-0" /> : <Check className="w-3.5 h-3.5 text-blue-600 mt-0.5 shrink-0" />}
-                <div><p className="text-xs font-medium text-foreground">{c.name} {c.novel && <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">Novel</span>}</p><p className="text-[10px] text-muted-foreground leading-tight">{c.desc}</p></div>
+                <div><p className="text-xs font-medium text-foreground">{c.name} {c.novel && <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 hidden sm:inline">Novel</span>}</p><p className="text-[11px] sm:text-[10px] text-muted-foreground leading-tight">{c.desc}</p></div>
               </div>
             ))}
           </motion.div>
@@ -214,9 +214,11 @@ export default function AnomalyDetection() {
       {/* Investigation in progress indicator */}
       {investigating && (
         <div className="card p-3 border-l-4 border-l-blue-500">
-          <div className="flex items-center gap-2">
-            <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
-            <span className="text-sm font-medium text-foreground">Investigation Agent is working...</span>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2">
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+              <span className="text-sm font-medium text-foreground">Investigation Agent is working...</span>
+            </div>
             <span className="text-xs text-muted-foreground">LLM picks tools and queries external systems per anomaly</span>
           </div>
         </div>
@@ -225,21 +227,23 @@ export default function AnomalyDetection() {
       {/* Agent Reasoning Panel — auto-scrolls to bottom */}
       {agentReasoning && (
         <div className="card p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Brain className="w-4 h-4 text-violet-500" />
-            <span className="text-sm font-semibold text-foreground">Investigation Agent Reasoning</span>
-            {investigating && <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />}
-            {!investigating && <span className="text-[10px] text-emerald-600 font-medium">Complete</span>}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mb-2">
+            <div className="flex items-center gap-2">
+              <Brain className="w-4 h-4 text-violet-500" />
+              <span className="text-sm font-semibold text-foreground">Investigation Agent Reasoning</span>
+              {investigating && <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />}
+              {!investigating && <span className="text-[10px] text-emerald-600 font-medium">Complete</span>}
+            </div>
             <span className="text-[10px] text-muted-foreground">LLM directs tool calls (Historian, MES, CMMS, LIMS) per anomaly type</span>
           </div>
           <div ref={reasoningRef} className="bg-secondary rounded-lg p-3 max-h-48 overflow-y-auto scroll-smooth">
-            <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono">{agentReasoning}</pre>
+            <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono overflow-x-auto break-words">{agentReasoning}</pre>
           </div>
         </div>
       )}
 
       {/* Severity Summary */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3">
         {Object.entries(SEVERITY_CONFIG).map(([severity, config]) => (
           <motion.button key={severity} onClick={() => setFilter(filter === severity ? 'all' : severity)} whileTap={{ scale: 0.98 }} className={`card p-3 border-l-4 text-left ${config.color} hover:shadow-md transition-all ${filter === severity ? 'ring-2 ring-blue-500' : ''}`}>
             <div className="flex items-center gap-1.5 mb-1">
@@ -253,7 +257,7 @@ export default function AnomalyDetection() {
 
       {/* Anomalies List */}
       <div className="card overflow-hidden">
-        <div className="px-5 py-3 border-b border-border bg-secondary">
+        <div className="px-4 sm:px-5 py-3 border-b border-border bg-secondary">
           <h2 className="text-sm font-semibold text-foreground">Detected ({filteredAnomalies.length})</h2>
         </div>
         {loading ? (
@@ -277,9 +281,9 @@ export default function AnomalyDetection() {
                       {isSilentLie ? <Eye className="w-4 h-4" /> : <SeverityIcon className="w-4 h-4" />}
                   </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
+                      <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
                         <span className="font-semibold text-foreground text-sm">{anomaly.tag_id}</span>
-                        {isSilentLie && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300">Corroboration</span>}
+                        {isSilentLie && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300">Corroboration</span>}
                         {!isSilentLie && <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${severityConfig.color}`}>{severityConfig.label}</span>}
                         {isSilentLie ? (
                           <span className="text-xs text-amber-700 dark:text-amber-300 font-medium">Sensor contradicts witnesses</span>
@@ -301,7 +305,7 @@ export default function AnomalyDetection() {
                       {anomaly.evidence && Object.keys(anomaly.evidence).length > 0 && (
                         <div className="flex flex-wrap gap-1.5 mb-1.5">
                           {Object.entries(anomaly.evidence).filter(([k]) => k !== 'contradictions').slice(0, 4).map(([key, value]) => (
-                            <span key={key} className="text-[10px] bg-secondary px-2 py-0.5 rounded font-mono">
+                            <span key={key} className="text-[11px] sm:text-[10px] bg-secondary px-2 py-0.5 rounded font-mono break-all">
                               {key}: {typeof value === 'number' ? value.toFixed(2) : String(value)}
                             </span>
                           ))}
@@ -312,7 +316,7 @@ export default function AnomalyDetection() {
                         {anomaly.hitl_status !== 'pending' && <span className={`font-medium ${anomaly.hitl_status === 'approved' ? 'text-emerald-600' : 'text-red-500'}`}>{anomaly.hitl_status}</span>}
                       </div>
                     </div>
-                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                    <ChevronRight className="w-4 h-4 text-muted-foreground hidden sm:block" />
                   </div>
                 </motion.div>
               )
@@ -321,7 +325,7 @@ export default function AnomalyDetection() {
         )}
       </div>
 
-      {/* Next step — always shown when anomalies exist, even during investigation */}
+      {/* Next step */}
       {anomalies.length > 0 && !investigating && (
         <div className="next-step">
           <div className="flex items-center gap-2">

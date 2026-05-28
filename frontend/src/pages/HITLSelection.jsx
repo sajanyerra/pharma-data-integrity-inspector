@@ -99,7 +99,7 @@ export default function HITLSelection() {
             <div key={a.id} className={`rounded-full transition-all duration-300 flex-1 ${selections[a.id] === 'approved' ? 'bg-emerald-500' : selections[a.id] === 'rejected' ? 'bg-red-400' : 'bg-border'}`} />
           ))}
         </div>
-        <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4 mt-2 text-xs text-muted-foreground">
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{approvedCount} approved</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" />{rejectedCount} rejected</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-border" />{pendingCount} pending</span>
@@ -135,15 +135,15 @@ export default function HITLSelection() {
                 className={`card overflow-hidden transition-all duration-200 ${sel === 'approved' ? 'border-emerald-400 dark:border-emerald-600 shadow-md' : sel === 'rejected' ? 'opacity-60' : 'hover:shadow-md'}`}
               >
                 <div className="p-4">
-                  <div className="flex items-start gap-3">
+                  <div className="flex flex-col sm:flex-row sm:items-start gap-3">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
                         <span className="font-bold text-foreground">{anomaly.tag_id}</span>
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-secondary text-muted-foreground">{anomaly.severity?.toUpperCase()}</span>
                         <span className="text-xs text-muted-foreground">{anomaly.anomaly_type.replace(/_/g, ' ')}</span>
                       </div>
                       <p className="text-xs text-muted-foreground mb-1.5">{humanReason}</p>
-                      <p className="text-[10px] text-muted-foreground mb-2">{(anomaly.confidence * 100).toFixed(0)}% confidence {anomaly.tag_name && `· ${anomaly.tag_name}`}</p>
+                      <p className="text-[11px] sm:text-[10px] text-muted-foreground mb-2">{(anomaly.confidence * 100).toFixed(0)}% confidence {anomaly.tag_name && `· ${anomaly.tag_name}`}</p>
 
                       <button onClick={() => setExpandedAnomaly(isExpanded ? null : anomaly.id)} className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
                         <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
@@ -154,7 +154,7 @@ export default function HITLSelection() {
                           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="mt-2 overflow-hidden">
                             <div className="flex flex-wrap gap-1.5">
                               {Object.entries(anomaly.evidence).slice(0, 5).map(([key, value]) => (
-                                <span key={key} className="text-[10px] bg-secondary px-2 py-1 rounded-md font-mono"><span className="font-medium">{key}:</span> {typeof value === 'number' ? value.toFixed(2) : String(value)}</span>
+                                <span key={key} className="text-[10px] bg-secondary px-2 py-1 rounded-md font-mono break-all"><span className="font-medium">{key}:</span> {typeof value === 'number' ? value.toFixed(2) : String(value)}</span>
                               ))}
                             </div>
                           </motion.div>
@@ -164,12 +164,13 @@ export default function HITLSelection() {
                       <input type="text" placeholder="Comment (optional)..." value={comments[anomaly.id] || ''} onChange={(e) => handleComment(anomaly.id, e.target.value)} className="mt-2 w-full px-2.5 py-1.5 border border-border rounded-lg text-xs bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent" />
                     </div>
 
-                    <div className="flex flex-col gap-1.5 shrink-0">
+                    {/* Buttons: side on desktop, bottom on mobile */}
+                    <div className="flex sm:flex-col gap-1.5 shrink-0">
                       <button onClick={() => handleSelection(anomaly.id, 'approved')} className={sel === 'approved' ? 'btn-approve-active' : 'btn-approve'}>
-                        <span className="flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5" />Approve</span>
+                        <span className="flex items-center gap-1 sm:gap-1.5"><CheckCircle className="w-3.5 h-3.5" /><span className="hidden sm:inline">Approve</span></span>
                       </button>
                       <button onClick={() => handleSelection(anomaly.id, 'rejected')} className={sel === 'rejected' ? 'btn-reject-active' : 'btn-reject'}>
-                        <span className="flex items-center gap-1.5"><XCircle className="w-3.5 h-3.5" />Reject</span>
+                        <span className="flex items-center gap-1 sm:gap-1.5"><XCircle className="w-3.5 h-3.5" /><span className="hidden sm:inline">Reject</span></span>
                       </button>
                     </div>
                   </div>
@@ -189,7 +190,7 @@ export default function HITLSelection() {
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
             className="fixed bottom-0 left-0 right-0 z-40 bg-card/95 backdrop-blur-md border-t border-border shadow-[0_-4px_20px_rgba(0,0,0,0.08)]"
           >
-            <div className="max-w-7xl mx-auto px-6 py-3.5 flex items-center justify-between">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-2">
               <div className="flex items-center gap-4 text-sm">
                 <span className="text-emerald-600 font-semibold">{approvedCount} approved</span>
                 <span className="text-red-500 font-semibold">{rejectedCount} rejected</span>
@@ -200,16 +201,16 @@ export default function HITLSelection() {
                   <button
                     onClick={handleAutoAdvance}
                     disabled={processing}
-                    className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-emerald-700 transition-all shadow-md active:scale-[0.97] disabled:opacity-50"
+                    className="flex items-center gap-2 bg-emerald-600 text-white px-4 sm:px-5 py-2.5 rounded-lg font-semibold hover:bg-emerald-700 transition-all shadow-md active:scale-[0.97] disabled:opacity-50 text-sm"
                   >
                     {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cpu className="w-4 h-4" />}
-                    {processing ? (approvedCount > 0 ? 'Generating hypotheses...' : 'Submitting...') : (approvedCount > 0 ? `Submit & Generate ${approvedCount} Hypothes${approvedCount !== 1 ? 'es' : 'is'}` : 'Submit & Continue')}
+                    {processing ? (approvedCount > 0 ? 'Generating...' : 'Submitting...') : (approvedCount > 0 ? `Generate ${approvedCount} Hypothes${approvedCount !== 1 ? 'es' : 'is'}` : 'Submit')}
                     {!processing && <ArrowRight className="w-4 h-4" />}
                   </button>
                 ) : (
-                  <button onClick={handleSubmit} disabled={processing} className="btn-primary flex items-center gap-2 disabled:opacity-50">
+                  <button onClick={handleSubmit} disabled={processing} className="btn-primary flex items-center gap-2 disabled:opacity-50 text-sm">
                     {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                    {processing ? 'Submitting...' : 'Submit Partial Reviews'}
+                    {processing ? 'Submitting...' : 'Submit Partial'}
                   </button>
                 )}
               </div>
@@ -220,7 +221,7 @@ export default function HITLSelection() {
 
       <AnimatePresence>
         {submitted && (
-          <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 50, opacity: 0 }} className="fixed bottom-6 right-6 card p-4 bg-emerald-600 text-white shadow-lg z-50">
+          <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 50, opacity: 0 }} className="fixed bottom-16 sm:bottom-6 right-4 sm:right-6 card p-4 bg-emerald-600 text-white shadow-lg z-50">
             <div className="flex items-center gap-2"><CheckCircle className="w-4 h-4" /><span className="text-sm font-medium">Submitted!</span></div>
           </motion.div>
         )}
