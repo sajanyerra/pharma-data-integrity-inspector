@@ -315,9 +315,10 @@ class TagSimulator:
         natural_value = config['base'] + causal_dev + hour_variation + noise
         true_value = self.ar_coeff * prev + (1 - self.ar_coeff) * natural_value
 
+        pre_anomaly_value = true_value
         true_value, anomaly_type = self._apply_anomaly(tag_id, timestamp, true_value, config)
 
-        self._prev_values[tag_id] = true_value
+        self._prev_values[tag_id] = pre_anomaly_value
         reported_value = round(true_value, 3)
 
         is_anomaly = anomaly_type is not None

@@ -431,10 +431,8 @@ async def select_anomalies_batch(selections: List[AnomalySelection]):
 
 @app.post("/analyze")
 async def run_analysis(request: RunAnalysisRequest):
-    """Reseed with random anomalies, run detection synchronously (~5s), then investigate in background with streaming progress."""
-    from agents.detection_engine import DetectionEngine
-    from agents.investigation_agent import InvestigationAgent
-    from agents.investigation_tools import set_investigation_context
+    """Reseed with random anomalies, run detection synchronously (~5s), then investigate in background via LangGraph pipeline with streaming progress."""
+    from agents.pipeline import PharmaPipeline, set_progress_hook
     from sqlalchemy import text as sa_text
     import time
 
@@ -476,148 +474,79 @@ async def run_analysis(request: RunAnalysisRequest):
                 await session.execute(sa_text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"), batch)
                 await session.commit()
 
-        _analysis_jobs[job_id]["progress"] = "Running 9 integrity checks..."
+        _analysis_jobs[job_id]["progress"] = "Running LangGraph pipeline..."
 
-        engine = DetectionEngine()
-        await engine.connect_db()
-        try:
-            detect_result = await engine.execute({"hours": request.hours})
-        finally:
-            await engine.disconnect_db()
+        _pipeline_ref = [None]
 
-        anomalies = detect_result.get("anomalies", [])
-        tag_profiles = detect_result.get("tag_profiles", {})
-        data_cache = detect_result.get("data_cache", {})
-        num_anomalies = len(anomalies)
-
-        if num_anomalies > 0:
-            async with async_session_maker() as session:
-                for anomaly in anomalies:
-                    evidence = anomaly.get("evidence", {})
-                    if not isinstance(evidence, dict):
-                        evidence = {}
-                    evidence_clean = {}
-                    for k, v in evidence.items():
-                        if hasattr(v, 'item'):
-                            evidence_clean[k] = v.item()
-                        elif isinstance(v, (int, float, str, bool, type(None))):
-                            evidence_clean[k] = v
-                        elif isinstance(v, (list, dict)):
-                            evidence_clean[k] = v
-                        else:
-                            evidence_clean[k] = str(v)
-                    if anomaly.get("is_silent_lie"):
-                        evidence_clean["is_silent_lie"] = True
-                    if anomaly.get("pharma_impact"):
-                        evidence_clean["pharma_impact"] = anomaly["pharma_impact"]
-                    if anomaly.get("severity"):
-                        evidence_clean["severity"] = anomaly["severity"]
-                    await session.execute(
-                        sa_text("INSERT INTO anomalies (tag_id, anomaly_type, confidence, evidence, hitl_status) VALUES (:tag_id, :anomaly_type, :confidence, :evidence, 'pending')"),
-                        {"tag_id": anomaly["tag_id"], "anomaly_type": anomaly["anomaly_type"], "confidence": float(anomaly["confidence"]), "evidence": json.dumps(evidence_clean)},
-                    )
-                await session.commit()
-
-        detect_reasoning = detect_result.get("agent_reasoning", "")
-
-        if num_anomalies == 0:
-            _analysis_jobs[job_id] = {
-                "status": "completed",
-                "progress": "Done — no anomalies",
-                "agent_reasoning": detect_reasoning,
-                "investigation_findings": [],
-                "result": {"status": "success", "anomalies_detected": 0, "agent_reasoning": detect_reasoning, "message": "No anomalies detected."},
-                "error": None,
-            }
-            return {"job_id": job_id, "status": "completed", "anomalies_detected": 0}
-
-        _analysis_jobs[job_id]["status"] = "investigating"
-        _analysis_jobs[job_id]["progress"] = f"Detected {num_anomalies} anomalies. Investigation Agent starting..."
-        _analysis_jobs[job_id]["agent_reasoning"] = detect_reasoning
-
-        tag_metadata = {}
-        try:
-            sim_meta = TagSimulator(seed=42)
-            meta_list = sim_meta.get_tag_metadata()
-            meta_map = {m["tag_id"]: m for m in meta_list}
-            for tag_id, tc in sim_meta.TAG_CONFIGS.items():
-                m = meta_map.get(tag_id, {})
-                tag_metadata[tag_id] = {"tag_id": tag_id, "tag_name": m.get("tag_name", tag_id), "unit_type": m.get("unit_type", "Unknown"), "data_type": tc.get("data_type", "Unknown"), "normal_min": m.get("normal_min", 0), "normal_max": m.get("normal_max", 100), "description": m.get("description", "")}
-        except Exception:
-            pass
-
-        cross_sensor_groups = {}
-        try:
-            cross_sensor_groups = TagSimulator(seed=42).CROSS_SENSOR_WITNESSES
-        except Exception:
-            pass
-
-        async def _investigate():
+        async def _run_pipeline():
             try:
-                agent = InvestigationAgent()
-                await agent.connect_db()
-                try:
-                    set_investigation_context(
-                        anomalies=anomalies, tag_metadata=tag_metadata,
-                        data_cache=data_cache, tag_profiles=tag_profiles,
-                        cross_sensor_groups=cross_sensor_groups,
-                        simulator=TagSimulator(seed=42),
-                    )
+                pipeline = PharmaPipeline()
+                _pipeline_ref[0] = pipeline
 
-                    from langgraph.prebuilt import create_react_agent
-                    react_agent = create_react_agent(
-                        model=agent.llm,
-                        tools=agent.tools,
-                        prompt="You are a pharma process engineer investigating sensor anomalies. "
-                               "You have 4 tools: query_historian (PI Historian time series), "
-                               "query_events (MES batch/events), query_maintenance (CMMS work orders), "
-                               "query_lab_results (LIMS lab data). "
-                               "Investigate by calling the RIGHT tools for each anomaly type. "
-                               "Be concise — call 1-2 tools, then give a 2-3 sentence summary. "
-                               "Do NOT call all tools on every anomaly.",
-                    )
+                detect_reasoning_holder = [""]
 
-                    all_findings = []
-                    all_reasoning = []
+                async def progress_callback(event_type, data):
+                    if event_type == "detect_start":
+                        _analysis_jobs[job_id]["progress"] = data.get("message", "Detecting...")
+                    elif event_type == "detect_done":
+                        _analysis_jobs[job_id]["progress"] = f"Detected {data.get('anomalies', 0)} anomalies"
+                    elif event_type == "investigate_anomaly":
+                        _analysis_jobs[job_id]["status"] = "investigating"
+                        _analysis_jobs[job_id]["progress"] = data.get("message", "Investigating...")
+                    elif event_type == "investigate_anomaly_done":
+                        _analysis_jobs[job_id]["investigation_findings"] = data.get("findings_so_far", [])
+                        _analysis_jobs[job_id]["agent_reasoning"] = data.get("reasoning_so_far", "")
 
-                    for i, anomaly in enumerate(anomalies):
-                        tag_id = anomaly.get("tag_id", "Unknown")
-                        _analysis_jobs[job_id]["progress"] = f"Stage 2: Investigating {tag_id} ({i+1}/{num_anomalies})..."
-                        try:
-                            finding = await agent._investigate_one(react_agent, anomaly)
-                            all_findings.append({k: v for k, v in finding.items() if k != "reasoning"})
-                            all_reasoning.append(finding.get("reasoning", ""))
-                            _analysis_jobs[job_id]["investigation_findings"] = all_findings
-                            _analysis_jobs[job_id]["agent_reasoning"] = detect_reasoning + "\n\n" + "\n\n".join(all_reasoning)
-                        except Exception as e:
-                            print(f"[Analyze] Investigation failed for {tag_id}: {e}")
-                            all_reasoning.append(f"--- {tag_id}: investigation failed ---\n{str(e)[:100]}")
-                            _analysis_jobs[job_id]["agent_reasoning"] = detect_reasoning + "\n\n" + "\n\n".join(all_reasoning)
+                set_progress_hook(progress_callback)
 
-                    combined_reasoning = detect_reasoning + "\n\n" + "\n\n".join(all_reasoning)
+                result = await pipeline.run_detect_investigate({"hours": request.hours})
 
-                    try:
-                        await agent.save_trace(
-                            {"anomalies": anomalies},
-                            {"investigation_findings": all_findings, "agent_reasoning": combined_reasoning, "summary": {"total_investigated": len(all_findings)}},
-                        )
-                    except Exception:
-                        pass
+                anomalies = result.get("anomalies", [])
+                num_anomalies = len(anomalies)
 
-                finally:
-                    await agent.disconnect_db()
+                if num_anomalies > 0:
+                    async with async_session_maker() as session:
+                        for anomaly in anomalies:
+                            evidence = anomaly.get("evidence", {})
+                            if not isinstance(evidence, dict):
+                                evidence = {}
+                            evidence_clean = {}
+                            for k, v in evidence.items():
+                                if hasattr(v, 'item'):
+                                    evidence_clean[k] = v.item()
+                                elif isinstance(v, (int, float, str, bool, type(None))):
+                                    evidence_clean[k] = v
+                                elif isinstance(v, (list, dict)):
+                                    evidence_clean[k] = v
+                                else:
+                                    evidence_clean[k] = str(v)
+                            if anomaly.get("is_silent_lie"):
+                                evidence_clean["is_silent_lie"] = True
+                            if anomaly.get("pharma_impact"):
+                                evidence_clean["pharma_impact"] = anomaly["pharma_impact"]
+                            if anomaly.get("severity"):
+                                evidence_clean["severity"] = anomaly["severity"]
+                            await session.execute(
+                                sa_text("INSERT INTO anomalies (tag_id, anomaly_type, confidence, evidence, hitl_status) VALUES (:tag_id, :anomaly_type, :confidence, :evidence, 'pending')"),
+                                {"tag_id": anomaly["tag_id"], "anomaly_type": anomaly["anomaly_type"], "confidence": float(anomaly["confidence"]), "evidence": json.dumps(evidence_clean)},
+                            )
+                        await session.commit()
+
+                combined_reasoning = result.get("agent_reasoning", "")
+                findings = result.get("investigation_findings", [])
 
                 _analysis_jobs[job_id] = {
                     "status": "completed",
                     "progress": "Done",
                     "agent_reasoning": combined_reasoning,
-                    "investigation_findings": all_findings,
+                    "investigation_findings": findings,
                     "result": {
                         "status": "success",
                         "anomalies_detected": num_anomalies,
                         "agent_reasoning": combined_reasoning,
-                        "investigation_findings": all_findings,
-                        "message": f"Pipeline: {num_anomalies} anomalies detected and investigated. Awaiting HITL review.",
+                        "investigation_findings": findings,
+                        "thread_id": result.get("thread_id", "pipeline-main"),
+                        "message": f"LangGraph pipeline: {num_anomalies} anomalies detected and investigated. Awaiting HITL review.",
                     },
                     "error": None,
                 }
@@ -626,15 +555,17 @@ async def run_analysis(request: RunAnalysisRequest):
                 traceback.print_exc()
                 _analysis_jobs[job_id] = {
                     "status": "failed",
-                    "progress": "Investigation failed",
+                    "progress": "Pipeline failed",
                     "agent_reasoning": _analysis_jobs[job_id].get("agent_reasoning", ""),
                     "investigation_findings": _analysis_jobs[job_id].get("investigation_findings", []),
                     "result": None,
                     "error": str(e),
                 }
+            finally:
+                set_progress_hook(None)
 
-        asyncio.create_task(_investigate())
-        return {"job_id": job_id, "status": "investigating", "anomalies_detected": num_anomalies}
+        asyncio.create_task(_run_pipeline())
+        return {"job_id": job_id, "status": "investigating", "anomalies_detected": 0}
 
     except Exception as e:
         import traceback
@@ -712,13 +643,10 @@ async def get_analysis_status(job_id: str):
 
 @app.post("/analyze-sync")
 async def run_analysis_sync(request: RunAnalysisRequest):
-    """Synchronous analysis for debugging"""
+    """Synchronous analysis for debugging — runs detect+investigate via LangGraph pipeline"""
     try:
         pipeline = PharmaPipeline()
-        result = await pipeline.run({
-            "hours": request.hours,
-            "tag_ids": request.tag_ids
-        })
+        result = await pipeline.run_detect_investigate({"hours": request.hours})
         anomalies = result.get("anomalies", [])
         profiles = result.get("tag_profiles", {})
         
