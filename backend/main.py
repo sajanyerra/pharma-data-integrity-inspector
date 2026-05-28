@@ -1170,12 +1170,12 @@ async def get_pipeline_info():
             {
                 "id": 1, "name": "Detection Engine", "type": "deterministic",
                 "engine": "9 rule-based checks, no LLM",
-                "flow": "9 baseline checks → dedup → priority sort → return anomalies"
+                "flow": "9 baseline checks → dedup → priority sort → cap at 2 → return anomalies"
             },
             {
                 "id": 2, "name": "Investigation Agent", "type": "ai_agent",
                 "engine": "LLM-directed tool calls with 4 tools (query_historian, query_events, query_maintenance, query_lab_results) + ChatOpenAI (Groq). LLM picks which tools to call per anomaly.",
-                "flow": "Concurrent per-anomaly: LLM decides tools → calls 1-2 tools → summarizes → findings"
+                "flow": "Sequential per-anomaly (2 max): LLM decides tools → calls 1-2 tools → summarizes → findings"
             },
             {
                 "id": 3, "name": "HITL Gate", "type": "human",
@@ -1221,7 +1221,7 @@ async def get_tech_stack():
             "items": [
                 {"name": "Groq Llama 3.1 8B Instant", "role": "Fast LLM for Investigation, Hypothesis, and Report agents via langchain_openai", "icon": "Brain"},
                 {"name": "LangChain", "role": "Prompt templates, output parsers, agent tool framework", "icon": "Link2"},
-                {"name": "LangGraph", "role": "5-stage StateGraph with HITL gate between Investigation and Hypothesis", "icon": "GitBranch"},
+                {"name": "LangGraph", "role": "5-stage StateGraph, detect sync + investigate async with streaming progress", "icon": "GitBranch"},
                 {"name": "LangSmith", "role": "Trace logging, evaluation, and debug (EU endpoint)", "icon": "Activity"},
             ]
         },

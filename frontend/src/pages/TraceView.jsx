@@ -63,13 +63,13 @@ export default function TraceView() {
   const getAgentSummary = (trace) => {
     const out = trace.output || {}
     if (trace.agent_name === 'DetectionEngine') {
-      const count = out.tag_profiles ? Object.keys(out.tag_profiles).length : '?'
       const total = out.summary?.total_anomalies || out.anomalies?.length || 0
-      return `Profiled ${count} tags, detected ${total} anomalies`
+      return `Ran 9 checks, found ${total} anomalies`
     }
     if (trace.agent_name === 'InvestigationAgent') {
-      const tools = out.tools_used || out.tool_calls?.length || 0
-      return `Investigated with ${tools} tool calls`
+      const findings = out.investigation_findings || []
+      const tools = findings.reduce((s, f) => s + (f.tools_called?.length || 0), 0)
+      return `Investigated ${findings.length} anomalies, ${tools} tool calls`
     }
     if (trace.agent_name === 'HypothesisAgent') {
       const total = out.summary?.total_hypotheses || out.hypotheses?.length || 0
