@@ -59,75 +59,98 @@ export default function AnomalyDetection() {
     } catch { setLoading(false) }
   }
 
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+    setAnalysisPhase(null)
+    setInvestigating(false)
+  }
+
   useEffect(() => { fetchAnomalies() }, [])
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
   const runAnalysis = async () => {
+    stopPolling()
     setAnalysisPhase('detecting')
     setInvestigating(false)
     setAgentReasoning('')
+
+    let jobId = null
     try {
       const startRes = await axios.post(`${API_BASE}/analyze`, { hours: 24 })
-      const jobId = startRes.data.job_id
+      jobId = startRes.data.job_id
+      const initialStatus = startRes.data.status
       const initialAnomalies = startRes.data.anomalies_detected || 0
 
-      if (initialAnomalies > 0) {
-        setAnalysisPhase('investigating')
-        setInvestigating(true)
-        await fetchAnomalies()
+      if (initialStatus === 'failed') {
+        setAnalysisPhase(null)
+        alert('Analysis failed: ' + (startRes.data.error || 'Unknown error'))
+        return
       }
+
+      if (initialStatus === 'completed') {
+        setAnalysisPhase(null)
+        setInvestigating(false)
+        await fetchAnomalies()
+        if (initialAnomalies === 0) {
+          alert('Analysis complete — no anomalies detected.')
+        }
+        return
+      }
+
+      setAnalysisPhase('investigating')
+      setInvestigating(true)
+      await fetchAnomalies()
 
       if (!jobId) {
         setAnalysisPhase(null)
         alert('Analysis failed to start — no job ID returned.')
         return
       }
-
-      let attempts = 0
-      pollRef.current = setInterval(async () => {
-        attempts++
-        if (attempts > 80) {
-          clearInterval(pollRef.current)
-          setAnalysisPhase(null)
-          setInvestigating(false)
-          return
-        }
-        try {
-          const statusRes = await axios.get(`${API_BASE}/analyze/status/${jobId}`)
-          const { status, progress, agent_reasoning, result, error } = statusRes.data
-
-          if (agent_reasoning) {
-            setAgentReasoning(agent_reasoning)
-          }
-          if (progress && progress.startsWith('Stage 2')) {
-            setAnalysisPhase('investigating')
-            setInvestigating(true)
-          }
-
-          if (status === 'completed') {
-            clearInterval(pollRef.current)
-            setAnalysisPhase(null)
-            setInvestigating(false)
-            await fetchAnomalies()
-            if (result && result.agent_reasoning) {
-              setAgentReasoning(result.agent_reasoning)
-            }
-          } else if (status === 'failed') {
-            clearInterval(pollRef.current)
-            setAnalysisPhase(null)
-            setInvestigating(false)
-            alert('Analysis failed: ' + (error || 'Unknown error'))
-          }
-        } catch (err) {
-          clearInterval(pollRef.current)
-          setAnalysisPhase(null)
-          setInvestigating(false)
-        }
-      }, 1500)
     } catch (err) {
       setAnalysisPhase(null)
       alert('Failed to start analysis: ' + (err.message || 'Network error'))
+      return
     }
+
+    let attempts = 0
+    pollRef.current = setInterval(async () => {
+      attempts++
+      if (attempts > 80) {
+        stopPolling()
+        return
+      }
+      try {
+        const statusRes = await axios.get(`${API_BASE}/analyze/status/${jobId}`)
+        const { status, progress, agent_reasoning, result, error } = statusRes.data
+
+        if (agent_reasoning) {
+          setAgentReasoning(agent_reasoning)
+        }
+        if (progress && progress.startsWith('Stage 2')) {
+          setAnalysisPhase('investigating')
+          setInvestigating(true)
+        }
+
+        if (status === 'completed') {
+          if (pollRef.current) clearInterval(pollRef.current)
+          pollRef.current = null
+          setAnalysisPhase(null)
+          setInvestigating(false)
+          await fetchAnomalies()
+          if (result && result.agent_reasoning) {
+            setAgentReasoning(result.agent_reasoning)
+          }
+        } else if (status === 'failed') {
+          stopPolling()
+          alert('Analysis failed: ' + (error || 'Unknown error'))
+        }
+      } catch (err) {
+        stopPolling()
+      }
+    }, 1500)
   }
 
   const isRunning = analysisPhase !== null
@@ -200,6 +223,7 @@ export default function AnomalyDetection() {
             <Brain className="w-4 h-4 text-violet-500" />
             <span className="text-sm font-semibold text-foreground">Investigation Agent Reasoning</span>
             {investigating && <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />}
+            {!investigating && <span className="text-[10px] text-emerald-600 font-medium">Complete</span>}
             <span className="text-[10px] text-muted-foreground">LLM directs tool calls (Historian, MES, CMMS, LIMS) per anomaly type</span>
           </div>
           <div className="bg-secondary rounded-lg p-3 max-h-48 overflow-y-auto">

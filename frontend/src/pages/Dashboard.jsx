@@ -44,45 +44,66 @@ export default function Dashboard({ liveTags = [] }) {
   const unitTypes = ['all', ...new Set(tags.map(t => (t.unit_type || t.tag_id.split('-')[0])))]
   const filteredTags = selectedUnit === 'all' ? tags : tags.filter(t => (t.unit_type || t.tag_id.split('-')[0]) === selectedUnit)
 
+  const stages = [
+    { icon: AlertTriangle, label: 'Detect', sub: 'Code', desc: '9 deterministic rule checks', color: 'bg-violet-500', ring: 'ring-violet-200 dark:ring-violet-800' },
+    { icon: Search, label: 'Investigate', sub: 'AI + 4 Tools', desc: 'Historian, MES, CMMS, LIMS', color: 'bg-blue-500', ring: 'ring-blue-200 dark:ring-blue-800' },
+    { icon: ShieldCheck, label: 'HITL Gate', sub: 'You', desc: 'Approve AI findings', color: 'bg-amber-500', ring: 'ring-amber-200 dark:ring-amber-800' },
+    { icon: Brain, label: 'Hypothesize', sub: 'AI', desc: 'Root cause analysis', color: 'bg-teal-500', ring: 'ring-teal-200 dark:ring-teal-800' },
+    { icon: FileText, label: 'Report', sub: 'AI + Templates', desc: 'PDF, HTML, JSON', color: 'bg-orange-500', ring: 'ring-orange-200 dark:ring-orange-800' },
+  ]
+
   return (
     <div className="space-y-5">
-      {/* Hero */}
-      <div className="card p-5 bg-gradient-to-br from-slate-700 to-slate-800 text-white border-0">
-        <div className="flex items-start justify-between gap-4">
+      {/* Hero — compact title + CTA */}
+      <div className="card p-4 bg-gradient-to-br from-slate-700 to-slate-800 text-white border-0">
+        <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold">Pharma Data Integrity Inspector</h1>
-            <p className="text-slate-300 mt-1 text-xs">5-stage pipeline catches sensor anomalies — including ones that look normal but are wrong.</p>
-            <div className="flex items-center gap-2 mt-3">
-              <button onClick={() => navigate(anomalyCount === 0 ? '/anomalies' : '/hitl')}
-                className="flex items-center gap-1.5 bg-white text-slate-800 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-100 transition-colors shadow">
-                <Play className="w-3.5 h-3.5" />{anomalyCount === 0 ? 'Start Analysis' : 'Review Anomalies'}<ArrowRight className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={handleReset} disabled={resetting}
-                className="flex items-center gap-1 bg-slate-600/50 text-slate-300 px-2.5 py-2 rounded-lg text-xs hover:bg-slate-600/80 transition-colors disabled:opacity-50">
-                <RotateCcw className={`w-3 h-3 ${resetting ? 'animate-spin' : ''}`} />Reset
-              </button>
-            </div>
+            <h1 className="text-lg font-bold">Pharma Data Integrity Inspector</h1>
+            <p className="text-slate-300 text-xs">Catches sensor anomalies — including ones that look normal but are wrong.</p>
           </div>
-          <div className="hidden md:flex items-center gap-0.5 shrink-0">
-            {[
-              { icon: AlertTriangle, label: 'Detect', sub: 'Code', color: 'bg-violet-500' },
-              { icon: Search, label: 'Investigate', sub: 'AI + 4 Tools', color: 'bg-blue-500' },
-              { icon: ShieldCheck, label: 'HITL', sub: 'You', color: 'bg-amber-500' },
-              { icon: Brain, label: 'Hypothesize', sub: 'AI', color: 'bg-teal-500' },
-              { icon: FileText, label: 'Report', sub: 'AI + Tmpl', color: 'bg-orange-500' },
-            ].map((s, i, arr) => (
-              <div key={s.label} className="flex items-center">
-                <div className="flex flex-col items-center gap-0.5 px-2">
-                  <div className={`w-8 h-8 ${s.color} rounded-lg flex items-center justify-center`}>
-                    <s.icon className="w-4 h-4 text-white" />
+          <div className="flex items-center gap-2">
+            <button onClick={() => navigate(anomalyCount === 0 ? '/anomalies' : '/hitl')}
+              className="flex items-center gap-1.5 bg-white text-slate-800 px-3.5 py-2 rounded-lg text-sm font-semibold hover:bg-slate-100 transition-colors shadow">
+              <Play className="w-3.5 h-3.5" />{anomalyCount === 0 ? 'Start Analysis' : 'Review'}<ArrowRight className="w-3.5 h-3.5" />
+            </button>
+            <button onClick={handleReset} disabled={resetting}
+              className="flex items-center gap-1 bg-slate-600/50 text-slate-300 px-2 py-2 rounded-lg text-xs hover:bg-slate-600/80 transition-colors disabled:opacity-50">
+              <RotateCcw className={`w-3 h-3 ${resetting ? 'animate-spin' : ''}`} />Reset
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Pipeline Flow — the main explainer */}
+      <div className="card p-5">
+        <h2 className="text-sm font-bold text-foreground mb-4">5-Stage Pipeline</h2>
+        <div className="flex items-start justify-center gap-0">
+          {stages.map((s, i) => {
+            const Icon = s.icon
+            return (
+              <div key={s.label} className="flex items-start">
+                <div className="flex flex-col items-center w-[90px]">
+                  <div className={`w-12 h-12 ${s.color} rounded-xl flex items-center justify-center shadow-md ring-2 ${s.ring}`}>
+                    <Icon className="w-6 h-6 text-white" />
                   </div>
-                  <span className="text-[8px] text-slate-400 font-medium">{s.label}</span>
-                  <span className="text-[7px] text-slate-500">{s.sub}</span>
+                  <p className="text-xs font-bold text-foreground mt-2">{s.label}</p>
+                  <p className="text-[10px] font-semibold text-muted-foreground mt-0.5 bg-secondary px-1.5 py-0.5 rounded">{s.sub}</p>
+                  <p className="text-[9px] text-muted-foreground mt-1 text-center leading-tight">{s.desc}</p>
                 </div>
-                {i < arr.length - 1 && <ChevronRight className="w-3 h-3 text-slate-500" />}
+                {i < stages.length - 1 && (
+                  <div className="flex flex-col items-center justify-start pt-3 mx-1 min-w-[28px]">
+                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                    {(i === 1 || i === 3) && (
+                      <div className="flex items-center gap-0.5 mt-1">
+                        <Shield className="w-2.5 h-2.5 text-emerald-500" />
+                        <span className="text-[8px] text-emerald-600 dark:text-emerald-400 font-semibold whitespace-nowrap">Guardrail</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
+            )
+          })}
         </div>
       </div>
 
