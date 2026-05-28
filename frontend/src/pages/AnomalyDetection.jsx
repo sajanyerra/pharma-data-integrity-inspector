@@ -322,14 +322,22 @@ export default function AnomalyDetection() {
       </div>
 
       {/* Next step — always shown when anomalies exist, even during investigation */}
-      {anomalies.length > 0 && (
+      {anomalies.length > 0 && !investigating && (
         <div className="next-step">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-blue-600" />
             <span className="text-sm font-medium text-foreground">Next: approve or reject anomalies</span>
-            {investigating && <span className="text-[10px] text-muted-foreground">(investigation running in background)</span>}
           </div>
           <button onClick={() => navigate('/hitl')} className="next-step-btn"><ArrowRight className="w-4 h-4" /></button>
+        </div>
+      )}
+      {anomalies.length > 0 && investigating && (
+        <div className="next-step opacity-50 cursor-not-allowed">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-blue-600" />
+            <span className="text-sm font-medium text-foreground">Next: approve or reject anomalies</span>
+            <span className="text-[10px] text-muted-foreground">(waiting for investigation...)</span>
+          </div>
         </div>
       )}
     </div>
