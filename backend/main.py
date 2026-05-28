@@ -492,7 +492,6 @@ async def run_analysis(request: RunAnalysisRequest):
 
         if num_anomalies > 0:
             async with async_session_maker() as session:
-                from sqlalchemy import text
                 for anomaly in anomalies:
                     evidence = anomaly.get("evidence", {})
                     if not isinstance(evidence, dict):
@@ -514,7 +513,7 @@ async def run_analysis(request: RunAnalysisRequest):
                     if anomaly.get("severity"):
                         evidence_clean["severity"] = anomaly["severity"]
                     await session.execute(
-                        text("INSERT INTO anomalies (tag_id, anomaly_type, confidence, evidence, hitl_status) VALUES (:tag_id, :anomaly_type, :confidence, :evidence, 'pending')"),
+                        sa_text("INSERT INTO anomalies (tag_id, anomaly_type, confidence, evidence, hitl_status) VALUES (:tag_id, :anomaly_type, :confidence, :evidence, 'pending')"),
                         {"tag_id": anomaly["tag_id"], "anomaly_type": anomaly["anomaly_type"], "confidence": float(anomaly["confidence"]), "evidence": json.dumps(evidence_clean)},
                     )
                 await session.commit()
@@ -538,7 +537,6 @@ async def run_analysis(request: RunAnalysisRequest):
 
         tag_metadata = {}
         try:
-            from tag_simulator import TagSimulator
             sim_meta = TagSimulator(seed=42)
             meta_list = sim_meta.get_tag_metadata()
             meta_map = {m["tag_id"]: m for m in meta_list}
@@ -550,7 +548,6 @@ async def run_analysis(request: RunAnalysisRequest):
 
         cross_sensor_groups = {}
         try:
-            from tag_simulator import TagSimulator
             cross_sensor_groups = TagSimulator(seed=42).CROSS_SENSOR_WITNESSES
         except Exception:
             pass
