@@ -14,7 +14,10 @@ import ReportPreview from './pages/ReportPreview'
 import TraceView from './pages/TraceView'
 import StatsForNerds from './pages/StatsForNerds'
 
-import API_BASE from './api'
+import API_BASE, { sessionId } from './api'
+
+axios.defaults.baseURL = API_BASE
+axios.defaults.headers.common['X-Session-ID'] = sessionId
 
 const STEPS = [
   { path: '/', label: 'Profile', icon: BarChart3 },

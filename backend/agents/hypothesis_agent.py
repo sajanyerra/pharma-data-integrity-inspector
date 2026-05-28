@@ -94,6 +94,8 @@ class HypothesisAgent(BaseAgent):
         )
 
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        if input_data.get("session_id"):
+            self.session_id = input_data["session_id"]
         await self.connect_db()
         try:
             anomalies = input_data.get("anomalies", [])
@@ -192,8 +194,8 @@ Provide your analysis in this exact JSON format:
                     })
 
                     await self.db_conn.execute(
-                        "UPDATE anomalies SET hypothesis = $1, recommended_action = $2 WHERE id = $3",
-                        hypothesis["root_cause"], hypothesis["recommended_action"], anomaly.get("id")
+                        "UPDATE anomalies SET hypothesis = $1, recommended_action = $2 WHERE id = $3 AND session_id = $4",
+                        hypothesis["root_cause"], hypothesis["recommended_action"], anomaly.get("id"), self.session_id
                     )
 
                 except Exception as e:

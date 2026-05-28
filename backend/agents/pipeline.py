@@ -1,11 +1,12 @@
 """
 LangGraph Pipeline for Process Data Integrity Inspector
-5-stage workflow: detect → investigate → HITL → hypothesize → report
+5-stage workflow: detect -> investigate -> HITL -> hypothesize -> report
 Stage 1 (Detection Engine) is deterministic. Stage 2 (Investigation Agent) is ReAct with 4 tools.
 Stage 3 is HITL gate (LangGraph interrupt). Stage 4 (Hypothesis Agent) is single LLM call. Stage 5 is Report Generator.
+Per-session isolation: session_id flows through pipeline state.
 """
 
-from typing import Dict, Any, TypedDict, List, Optional
+from typing import Dict, Any, TypedDict, List, Optional, Callable, Awaitable
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import interrupt, Command
@@ -14,13 +15,18 @@ from agents.investigation_agent import InvestigationAgent
 from agents.hypothesis_agent import HypothesisAgent
 from agents.report_generator import ReportGenerator
 
-_progress_hook = None
+
+ProgressHook = Optional[Callable[[str, Dict], Awaitable[None]]]
+
+_progress_hooks: Dict[str, ProgressHook] = {}
 
 
-def set_progress_hook(hook):
-    """Set a progress callback for the pipeline. Called with (event_type, data) during execution."""
-    global _progress_hook
-    _progress_hook = hook
+def set_progress_hook(session_id: str, hook: ProgressHook):
+    _progress_hooks[session_id] = hook
+
+
+def get_progress_hook(session_id: str) -> ProgressHook:
+    return _progress_hooks.get(session_id)
 
 
 class PipelineState(TypedDict, total=False):
@@ -39,21 +45,24 @@ class PipelineState(TypedDict, total=False):
     current_step: str
     agent_reasoning: str
     hitl_decisions: Optional[Dict[str, str]]
+    session_id: str
 
 
 async def detect_step(state: PipelineState) -> dict:
-    """Stage 1: Detection Engine — deterministic rules, no LLM"""
-    if _progress_hook:
-        await _progress_hook("detect_start", {"message": "Running 9 integrity checks..."})
+    """Stage 1: Detection Engine -- deterministic rules, no LLM"""
+    session_id = state.get("session_id", "default")
+    hook = get_progress_hook(session_id)
+    if hook:
+        await hook("detect_start", {"message": "Running 9 integrity checks..."})
 
     engine = DetectionEngine()
-    result = await engine.execute({"hours": state.get("hours", 24)})
+    result = await engine.execute({"hours": state.get("hours", 24), "session_id": session_id})
     anomalies = result.get("anomalies", [])
     tag_profiles = result.get("tag_profiles", {})
     data_cache = result.get("data_cache", {})
 
-    if _progress_hook:
-        await _progress_hook("detect_done", {"anomalies": len(anomalies)})
+    if hook:
+        await hook("detect_done", {"anomalies": len(anomalies)})
 
     return {
         "anomalies": anomalies,
@@ -66,8 +75,10 @@ async def detect_step(state: PipelineState) -> dict:
 
 
 async def investigate_step(state: PipelineState) -> dict:
-    """Stage 2: Investigation Agent — ReAct with 4 genuine tools, per-anomaly progress via hook"""
+    """Stage 2: Investigation Agent -- ReAct with 4 genuine tools, per-anomaly progress via hook"""
     agent = InvestigationAgent()
+    session_id = state.get("session_id", "default")
+    agent.session_id = session_id
     tag_metadata = state.get("tag_metadata", {})
     if not tag_metadata:
         from tag_simulator import TagSimulator
@@ -90,6 +101,7 @@ async def investigate_step(state: PipelineState) -> dict:
     except Exception:
         pass
 
+    hook = get_progress_hook(session_id)
     anomalies = state.get("anomalies", [])
     all_findings = []
     all_reasoning_parts = []
@@ -117,15 +129,15 @@ async def investigate_step(state: PipelineState) -> dict:
                    "query_events (MES batch/events), query_maintenance (CMMS work orders), "
                    "query_lab_results (LIMS lab data). "
                    "Investigate by calling the RIGHT tools for each anomaly type. "
-                   "Be concise — call 1-2 tools, then give a 2-3 sentence summary. "
+                   "Be concise -- call 1-2 tools, then give a 2-3 sentence summary. "
                    "Do NOT call all tools on every anomaly.",
         )
 
         for i, anomaly in enumerate(anomalies):
             tag_id = anomaly.get("tag_id", "Unknown")
             anomaly_type = anomaly.get("anomaly_type", "unknown")
-            if _progress_hook:
-                await _progress_hook("investigate_anomaly", {
+            if hook:
+                await hook("investigate_anomaly", {
                     "tag_id": tag_id, "anomaly_type": anomaly_type,
                     "index": i, "total": len(anomalies),
                     "message": f"Stage 2: Investigating {tag_id} ({i+1}/{len(anomalies)})...",
@@ -139,8 +151,8 @@ async def investigate_step(state: PipelineState) -> dict:
                 print(f"[Pipeline] Investigation failed for {tag_id}: {e}")
                 all_reasoning_parts.append(f"--- {tag_id}: investigation failed ---\n{str(e)[:100]}")
 
-            if _progress_hook:
-                await _progress_hook("investigate_anomaly_done", {
+            if hook:
+                await hook("investigate_anomaly_done", {
                     "findings_so_far": all_findings,
                     "reasoning_so_far": state.get("agent_reasoning", "") + "\n\n" + "\n\n".join(all_reasoning_parts),
                 })
@@ -167,7 +179,7 @@ async def investigate_step(state: PipelineState) -> dict:
 
 
 async def hitl_gate_step(state: PipelineState) -> dict:
-    """Stage 3: Human-in-the-Loop Gate — LangGraph interrupt pauses execution until human provides decisions"""
+    """Stage 3: Human-in-the-Loop Gate -- LangGraph interrupt pauses execution until human provides decisions"""
     anomalies = state.get("anomalies", [])
     if not anomalies:
         return {"current_step": "hitl_skipped", "approved_anomalies": []}
@@ -195,12 +207,15 @@ async def hitl_gate_step(state: PipelineState) -> dict:
 
 
 async def hypothesize_step(state: PipelineState) -> dict:
-    """Stage 4: Hypothesis Agent — single LLM call with investigation findings"""
+    """Stage 4: Hypothesis Agent -- single LLM call with investigation findings"""
+    session_id = state.get("session_id", "default")
     generator = HypothesisAgent()
+    generator.session_id = session_id
     approved = state.get("approved_anomalies", state.get("anomalies", []))
     result = await generator.execute({
         "anomalies": approved,
         "investigation_findings": state.get("investigation_findings", []),
+        "session_id": session_id,
     })
     return {
         "hypotheses": result.get("hypotheses", []),
@@ -210,7 +225,7 @@ async def hypothesize_step(state: PipelineState) -> dict:
 
 
 async def report_step(state: PipelineState) -> dict:
-    """Stage 5: Report Generator — templates + LLM narrative"""
+    """Stage 5: Report Generator -- templates + LLM narrative"""
     reporter = ReportGenerator()
     result = await reporter.execute({
         "anomalies": state.get("approved_anomalies", state.get("anomalies", [])),
@@ -266,15 +281,23 @@ class PharmaPipeline:
 
         return workflow.compile(checkpointer=self.checkpointer)
 
-    async def run_detect_investigate(self, initial_input: Dict[str, Any]) -> Dict[str, Any]:
+    async def run_detect_investigate(self, initial_input: Dict[str, Any], session_id: str = "default", progress_hook: ProgressHook = None) -> Dict[str, Any]:
         """Run detect + investigate via LangGraph graph. Stops at HITL interrupt."""
-        config = {"configurable": {"thread_id": "pipeline-main"}}
+        if progress_hook:
+            set_progress_hook(session_id, progress_hook)
+
+        thread_id = f"pipeline-{session_id}"
+        config = {"configurable": {"thread_id": thread_id}}
         initial_state = {
             "hours": initial_input.get("hours", 24),
             "tag_ids": initial_input.get("tag_ids", None),
+            "session_id": session_id,
         }
 
         result = await self.graph.ainvoke(initial_state, config=config)
+
+        if session_id in _progress_hooks:
+            del _progress_hooks[session_id]
 
         return {
             "tag_profiles": result.get("tag_profiles", {}),
@@ -283,10 +306,10 @@ class PharmaPipeline:
             "hitl_required": result.get("hitl_required", False),
             "current_step": result.get("current_step", ""),
             "agent_reasoning": result.get("agent_reasoning", ""),
-            "thread_id": "pipeline-main",
+            "thread_id": thread_id,
         }
 
-    async def resume_after_hitl(self, hitl_decisions: Dict[str, str], thread_id: str = "pipeline-main") -> Dict[str, Any]:
+    async def resume_after_hitl(self, hitl_decisions: Dict[str, str], thread_id: str = "pipeline-default") -> Dict[str, Any]:
         """Resume the graph after HITL approval, providing human decisions via Command."""
         config = {"configurable": {"thread_id": thread_id}}
         result = await self.graph.ainvoke(Command(resume=hitl_decisions), config=config)

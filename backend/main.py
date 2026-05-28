@@ -1,9 +1,10 @@
 """
 Pharma Data Integrity Inspector - Backend API
 FastAPI application with multi-agent orchestration
+Per-session isolation: each user gets their own data sandbox
 """
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
@@ -15,6 +16,8 @@ import json
 import random
 import uuid
 
+from sqlalchemy import text
+
 from database import init_db, get_db, async_session_maker
 from models import Tag, TagReading, Anomaly, AgentTrace
 from config import settings
@@ -25,6 +28,10 @@ from agents.report_generator import ReportGenerator
 from agents.pipeline import PharmaPipeline
 from agents.guardrail import guardrail
 from tag_simulator import TagSimulator
+
+
+async def get_session_id(x_session_id: Optional[str] = Header(None, alias="X-Session-ID")) -> str:
+    return x_session_id or "default"
 
 
 class TagReadingResponse(BaseModel):
@@ -66,64 +73,13 @@ class RunAnalysisRequest(BaseModel):
     tag_ids: Optional[List[str]] = None
 
 
-_seed_task = None
-_analysis_jobs = {}
+_analysis_jobs: dict = {}
 
 
-async def _seed_background():
-    """Background task: clear old anomalies, then seed 24h of historical data if tag_readings is empty"""
-    await asyncio.sleep(3)
-    from sqlalchemy import text, select, func
-    try:
-        async with async_session_maker() as session:
-            await session.execute(text("DELETE FROM anomalies"))
-            await session.execute(text("DELETE FROM agent_trace"))
-            await session.commit()
-            print("[OK] Cleared old anomalies and traces")
-        async with async_session_maker() as session:
-            result = await session.execute(select(func.count()).select_from(TagReading))
-            count = result.scalar()
-            if count > 0:
-                print(f"Database has {count:,} readings — skipping seed")
-                return
-            print("No readings found — seeding 24h of historical data (2-min intervals)...")
-            data_start = datetime.utcnow() - timedelta(hours=24)
-            seed = random.randint(1, 999999)
-            simulator = TagSimulator(seed=seed, start_time=data_start)
-            start_time = data_start
-            batch_size = 1000
-            batch = []
-            inserted = 0
-            interval = 120  # 2-minute intervals
-            total_points = 24 * 30  # 720 readings per tag
-            for i in range(total_points):
-                ts = start_time + timedelta(seconds=i * interval)
-                readings = simulator.generate_all_tags(ts)
-                for r in readings:
-                    batch.append({
-                        'tag_id': r['tag_id'],
-                        'timestamp': r['timestamp'],
-                        'value': r['value'],
-                        'quality_code': r['quality_code']
-                    })
-                    if len(batch) >= batch_size:
-                        await session.execute(
-                            text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
-                            batch
-                        )
-                        await session.commit()
-                        inserted += len(batch)
-                        batch = []
-            if batch:
-                await session.execute(
-                    text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
-                    batch
-                )
-                await session.commit()
-                inserted += len(batch)
-            print(f"[OK] Seeded {inserted:,} readings")
-    except Exception as e:
-        print(f"Seed error: {e}")
+def _get_session_jobs(session_id: str) -> dict:
+    if session_id not in _analysis_jobs:
+        _analysis_jobs[session_id] = {}
+    return _analysis_jobs[session_id]
 
 
 @asynccontextmanager
@@ -141,8 +97,26 @@ async def lifespan(app: FastAPI):
     print("Starting Pharma Data Integrity Inspector...")
     await init_db()
     print("Database initialized")
-    global _seed_task
-    _seed_task = asyncio.create_task(_seed_background())
+    async with async_session_maker() as session:
+        for table in ["tag_readings", "anomalies", "agent_trace"]:
+            try:
+                await session.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS session_id VARCHAR(36) NOT NULL DEFAULT 'default'"))
+            except Exception:
+                pass
+        try:
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_tag_readings_session ON tag_readings(session_id, tag_id, timestamp DESC)"))
+        except Exception:
+            pass
+        try:
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_anomalies_session ON anomalies(session_id)"))
+        except Exception:
+            pass
+        try:
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_agent_trace_session ON agent_trace(session_id)"))
+        except Exception:
+            pass
+        await session.commit()
+    print("Session isolation columns ensured")
     yield
     print("Shutting down...")
 
@@ -178,14 +152,16 @@ async def health_check():
 
 
 @app.get("/seeding-status")
-async def seeding_status():
-    """Check if background data seeding is complete"""
+async def seeding_status(session_id: str = Depends(get_session_id)):
+    """Check if session has data ready"""
     from sqlalchemy import select, func
-    if _seed_task is not None and not _seed_task.done():
-        return {"status": "seeding", "message": "Historical data is being seeded. Try again in a moment."}
     async with async_session_maker() as session:
-        result = await session.execute(select(func.count()).select_from(TagReading))
+        result = await session.execute(
+            select(func.count()).select_from(TagReading).where(TagReading.session_id == session_id)
+        )
         count = result.scalar()
+    if count == 0:
+        return {"status": "empty", "message": "No data for this session yet. Hit /analyze to seed and analyze."}
     return {"status": "ready", "readings": count}
 
 
@@ -209,13 +185,13 @@ async def guardrail_info():
 @app.post("/guardrail/test")
 async def guardrail_test(request: dict):
     """Test guardrail on sample text"""
-    text = request.get("text", "")
-    sanitized = guardrail.sanitize_text(text)
-    is_safe, reason = guardrail.check_recommendation(text)
+    text_content = request.get("text", "")
+    sanitized = guardrail.sanitize_text(text_content)
+    is_safe, reason = guardrail.check_recommendation(text_content)
     return {
-        "original": text,
+        "original": text_content,
         "sanitized": sanitized,
-        "changed": sanitized != text,
+        "changed": sanitized != text_content,
         "is_safe": is_safe,
         "reason": reason,
     }
@@ -247,7 +223,8 @@ async def get_tags():
 async def get_tag_readings(
     tag_id: str,
     hours: int = 24,
-    limit: int = 1000
+    limit: int = 1000,
+    session_id: str = Depends(get_session_id)
 ):
     """Get recent readings for a specific tag"""
     async with async_session_maker() as session:
@@ -256,6 +233,7 @@ async def get_tag_readings(
         query = (
             select(TagReading)
             .where(TagReading.tag_id == tag_id)
+            .where(TagReading.session_id == session_id)
             .order_by(desc(TagReading.timestamp))
             .limit(limit)
         )
@@ -282,12 +260,11 @@ async def get_tag_readings(
 
 
 @app.get("/tags/streaming")
-async def get_streaming_data():
+async def get_streaming_data(session_id: str = Depends(get_session_id)):
     """Get latest readings for all tags (for dashboard)"""
     async with async_session_maker() as session:
         from sqlalchemy import select, distinct
         
-        # Get latest reading for each tag
         tags_result = await session.execute(select(Tag.tag_id))
         tag_ids = [row[0] for row in tags_result.fetchall()]
         
@@ -296,6 +273,7 @@ async def get_streaming_data():
             query = (
                 select(TagReading)
                 .where(TagReading.tag_id == tag_id)
+                .where(TagReading.session_id == session_id)
                 .order_by(TagReading.timestamp.desc())
                 .limit(1)
             )
@@ -323,7 +301,8 @@ async def get_streaming_data():
 @app.get("/anomalies")
 async def get_anomalies(
     status: Optional[str] = None,
-    limit: int = 100
+    limit: int = 100,
+    session_id: str = Depends(get_session_id)
 ):
     """Get detected anomalies with optional status filter"""
     import json as _json
@@ -331,7 +310,7 @@ async def get_anomalies(
         async with async_session_maker() as session:
             from sqlalchemy import select
             
-            query = select(Anomaly).order_by(Anomaly.detected_at.desc()).limit(limit)
+            query = select(Anomaly).where(Anomaly.session_id == session_id).order_by(Anomaly.detected_at.desc()).limit(limit)
             
             if status:
                 query = query.where(Anomaly.hitl_status == status)
@@ -397,7 +376,7 @@ async def get_anomalies(
 
 
 @app.post("/anomalies/select")
-async def select_anomaly(selection: AnomalySelection):
+async def select_anomaly(selection: AnomalySelection, session_id: str = Depends(get_session_id)):
     """Update HITL status for an anomaly"""
     async with async_session_maker() as session:
         from sqlalchemy import update
@@ -405,6 +384,7 @@ async def select_anomaly(selection: AnomalySelection):
         await session.execute(
             update(Anomaly)
             .where(Anomaly.id == selection.anomaly_id)
+            .where(Anomaly.session_id == session_id)
             .values(hitl_status=selection.status)
         )
         await session.commit()
@@ -413,7 +393,7 @@ async def select_anomaly(selection: AnomalySelection):
 
 
 @app.post("/anomalies/select-batch")
-async def select_anomalies_batch(selections: List[AnomalySelection]):
+async def select_anomalies_batch(selections: List[AnomalySelection], session_id: str = Depends(get_session_id)):
     """Update HITL status for multiple anomalies"""
     async with async_session_maker() as session:
         from sqlalchemy import update
@@ -422,6 +402,7 @@ async def select_anomalies_batch(selections: List[AnomalySelection]):
             await session.execute(
                 update(Anomaly)
                 .where(Anomaly.id == selection.anomaly_id)
+                .where(Anomaly.session_id == session_id)
                 .values(hitl_status=selection.status)
             )
         
@@ -430,14 +411,14 @@ async def select_anomalies_batch(selections: List[AnomalySelection]):
 
 
 @app.post("/analyze")
-async def run_analysis(request: RunAnalysisRequest):
+async def run_analysis(request: RunAnalysisRequest, session_id: str = Depends(get_session_id)):
     """Reseed with random anomalies, run detection synchronously (~5s), then investigate in background via LangGraph pipeline with streaming progress."""
-    from agents.pipeline import PharmaPipeline, set_progress_hook
-    from sqlalchemy import text as sa_text
+    from agents.pipeline import PharmaPipeline
     import time
 
     job_id = str(uuid.uuid4())[:8]
-    _analysis_jobs[job_id] = {
+    session_jobs = _get_session_jobs(session_id)
+    session_jobs[job_id] = {
         "status": "detecting",
         "progress": "Reseeding data with random anomalies...",
         "agent_reasoning": "",
@@ -448,12 +429,12 @@ async def run_analysis(request: RunAnalysisRequest):
 
     try:
         async with async_session_maker() as session:
-            await session.execute(sa_text("DELETE FROM anomalies"))
-            await session.execute(sa_text("DELETE FROM agent_trace"))
-            await session.execute(sa_text("DELETE FROM tag_readings"))
+            await session.execute(text("DELETE FROM anomalies WHERE session_id = :session_id"), {"session_id": session_id})
+            await session.execute(text("DELETE FROM agent_trace WHERE session_id = :session_id"), {"session_id": session_id})
+            await session.execute(text("DELETE FROM tag_readings WHERE session_id = :session_id"), {"session_id": session_id})
             await session.commit()
 
-        _analysis_jobs[job_id]["progress"] = "Seeding 24h of sensor data..."
+        session_jobs[job_id]["progress"] = "Seeding 24h of sensor data..."
         seed = random.randint(1, 999999)
         data_start = datetime.utcnow() - timedelta(hours=24)
         simulator = TagSimulator(seed=seed, start_time=data_start)
@@ -465,41 +446,52 @@ async def run_analysis(request: RunAnalysisRequest):
                 ts = data_start + timedelta(seconds=i * interval)
                 readings = simulator.generate_all_tags(ts)
                 for r in readings:
-                    batch.append({'tag_id': r['tag_id'], 'timestamp': r['timestamp'], 'value': r['value'], 'quality_code': r['quality_code']})
+                    batch.append({
+                        'tag_id': r['tag_id'], 'timestamp': r['timestamp'],
+                        'value': r['value'], 'quality_code': r['quality_code'],
+                        'session_id': session_id,
+                    })
                     if len(batch) >= 2000:
-                        await session.execute(sa_text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"), batch)
+                        await session.execute(
+                            text("INSERT INTO tag_readings (session_id, tag_id, timestamp, value, quality_code) VALUES (:session_id, :tag_id, :timestamp, :value, :quality_code)"),
+                            batch
+                        )
                         await session.commit()
                         batch = []
             if batch:
-                await session.execute(sa_text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"), batch)
+                await session.execute(
+                    text("INSERT INTO tag_readings (session_id, tag_id, timestamp, value, quality_code) VALUES (:session_id, :tag_id, :timestamp, :value, :quality_code)"),
+                    batch
+                )
                 await session.commit()
 
-        _analysis_jobs[job_id]["progress"] = "Running LangGraph pipeline..."
+        session_jobs[job_id]["progress"] = "Running LangGraph pipeline..."
 
         _pipeline_ref = [None]
 
         async def _run_pipeline():
             try:
                 pipeline = PharmaPipeline()
-                _pipeline_ref[0] = pipeline
 
                 detect_reasoning_holder = [""]
 
                 async def progress_callback(event_type, data):
                     if event_type == "detect_start":
-                        _analysis_jobs[job_id]["progress"] = data.get("message", "Detecting...")
+                        session_jobs[job_id]["progress"] = data.get("message", "Detecting...")
                     elif event_type == "detect_done":
-                        _analysis_jobs[job_id]["progress"] = f"Detected {data.get('anomalies', 0)} anomalies"
+                        session_jobs[job_id]["progress"] = f"Detected {data.get('anomalies', 0)} anomalies"
                     elif event_type == "investigate_anomaly":
-                        _analysis_jobs[job_id]["status"] = "investigating"
-                        _analysis_jobs[job_id]["progress"] = data.get("message", "Investigating...")
+                        session_jobs[job_id]["status"] = "investigating"
+                        session_jobs[job_id]["progress"] = data.get("message", "Investigating...")
                     elif event_type == "investigate_anomaly_done":
-                        _analysis_jobs[job_id]["investigation_findings"] = data.get("findings_so_far", [])
-                        _analysis_jobs[job_id]["agent_reasoning"] = data.get("reasoning_so_far", "")
+                        session_jobs[job_id]["investigation_findings"] = data.get("findings_so_far", [])
+                        session_jobs[job_id]["agent_reasoning"] = data.get("reasoning_so_far", "")
 
-                set_progress_hook(progress_callback)
-
-                result = await pipeline.run_detect_investigate({"hours": request.hours})
+                result = await pipeline.run_detect_investigate(
+                    {"hours": request.hours},
+                    session_id=session_id,
+                    progress_hook=progress_callback,
+                )
 
                 anomalies = result.get("anomalies", [])
                 num_anomalies = len(anomalies)
@@ -527,15 +519,21 @@ async def run_analysis(request: RunAnalysisRequest):
                             if anomaly.get("severity"):
                                 evidence_clean["severity"] = anomaly["severity"]
                             await session.execute(
-                                sa_text("INSERT INTO anomalies (tag_id, anomaly_type, confidence, evidence, hitl_status) VALUES (:tag_id, :anomaly_type, :confidence, :evidence, 'pending')"),
-                                {"tag_id": anomaly["tag_id"], "anomaly_type": anomaly["anomaly_type"], "confidence": float(anomaly["confidence"]), "evidence": json.dumps(evidence_clean)},
+                                text("INSERT INTO anomalies (session_id, tag_id, anomaly_type, confidence, evidence, hitl_status) VALUES (:session_id, :tag_id, :anomaly_type, :confidence, :evidence, 'pending')"),
+                                {
+                                    "session_id": session_id,
+                                    "tag_id": anomaly["tag_id"],
+                                    "anomaly_type": anomaly["anomaly_type"],
+                                    "confidence": float(anomaly["confidence"]),
+                                    "evidence": json.dumps(evidence_clean),
+                                },
                             )
                         await session.commit()
 
                 combined_reasoning = result.get("agent_reasoning", "")
                 findings = result.get("investigation_findings", [])
 
-                _analysis_jobs[job_id] = {
+                session_jobs[job_id] = {
                     "status": "completed",
                     "progress": "Done",
                     "agent_reasoning": combined_reasoning,
@@ -545,7 +543,7 @@ async def run_analysis(request: RunAnalysisRequest):
                         "anomalies_detected": num_anomalies,
                         "agent_reasoning": combined_reasoning,
                         "investigation_findings": findings,
-                        "thread_id": result.get("thread_id", "pipeline-main"),
+                        "thread_id": result.get("thread_id", f"pipeline-{session_id}"),
                         "message": f"LangGraph pipeline: {num_anomalies} anomalies detected and investigated. Awaiting HITL review.",
                     },
                     "error": None,
@@ -553,36 +551,33 @@ async def run_analysis(request: RunAnalysisRequest):
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                _analysis_jobs[job_id] = {
+                session_jobs[job_id] = {
                     "status": "failed",
                     "progress": "Pipeline failed",
-                    "agent_reasoning": _analysis_jobs[job_id].get("agent_reasoning", ""),
-                    "investigation_findings": _analysis_jobs[job_id].get("investigation_findings", []),
+                    "agent_reasoning": session_jobs[job_id].get("agent_reasoning", ""),
+                    "investigation_findings": session_jobs[job_id].get("investigation_findings", []),
                     "result": None,
                     "error": str(e),
                 }
-            finally:
-                set_progress_hook(None)
 
         asyncio.create_task(_run_pipeline())
-        return {"job_id": job_id, "status": "investigating", "anomalies_detected": 0}
+        return {"job_id": job_id, "status": "investigating", "anomalies_detected": 0, "session_id": session_id}
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        _analysis_jobs[job_id] = {"status": "failed", "progress": "Detection failed", "agent_reasoning": "", "investigation_findings": [], "result": None, "error": str(e)}
+        session_jobs[job_id] = {"status": "failed", "progress": "Detection failed", "agent_reasoning": "", "investigation_findings": [], "result": None, "error": str(e)}
         return {"job_id": job_id, "status": "failed", "error": str(e)}
 
 
 @app.post("/reseed")
-async def reseed_data():
-    """Clear and reseed all data with fresh 24h of historical data (2-min intervals) with RANDOM anomalies"""
-    from sqlalchemy import text as sa_text
+async def reseed_data(session_id: str = Depends(get_session_id)):
+    """Clear and reseed session data with fresh 24h of historical data (2-min intervals) with RANDOM anomalies"""
     try:
         async with async_session_maker() as session:
-            await session.execute(sa_text("DELETE FROM anomalies"))
-            await session.execute(sa_text("DELETE FROM agent_trace"))
-            await session.execute(sa_text("DELETE FROM tag_readings"))
+            await session.execute(text("DELETE FROM anomalies WHERE session_id = :session_id"), {"session_id": session_id})
+            await session.execute(text("DELETE FROM agent_trace WHERE session_id = :session_id"), {"session_id": session_id})
+            await session.execute(text("DELETE FROM tag_readings WHERE session_id = :session_id"), {"session_id": session_id})
             await session.commit()
         
         seed = random.randint(1, 999999)
@@ -591,8 +586,8 @@ async def reseed_data():
         batch_size = 2000
         batch = []
         inserted = 0
-        interval = 120  # 2-minute intervals
-        total_points = 24 * 30  # 720 readings per tag
+        interval = 120
+        total_points = 24 * 30
         async with async_session_maker() as session:
             for i in range(total_points):
                 ts = start_time + timedelta(seconds=i * interval)
@@ -602,11 +597,12 @@ async def reseed_data():
                         'tag_id': r['tag_id'],
                         'timestamp': r['timestamp'],
                         'value': r['value'],
-                        'quality_code': r['quality_code']
+                        'quality_code': r['quality_code'],
+                        'session_id': session_id,
                     })
                     if len(batch) >= batch_size:
                         await session.execute(
-                            sa_text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
+                            text("INSERT INTO tag_readings (session_id, tag_id, timestamp, value, quality_code) VALUES (:session_id, :tag_id, :timestamp, :value, :quality_code)"),
                             batch
                         )
                         await session.commit()
@@ -614,7 +610,7 @@ async def reseed_data():
                         batch = []
             if batch:
                 await session.execute(
-                    sa_text("INSERT INTO tag_readings (tag_id, timestamp, value, quality_code) VALUES (:tag_id, :timestamp, :value, :quality_code)"),
+                    text("INSERT INTO tag_readings (session_id, tag_id, timestamp, value, quality_code) VALUES (:session_id, :tag_id, :timestamp, :value, :quality_code)"),
                     batch
                 )
                 await session.commit()
@@ -625,12 +621,15 @@ async def reseed_data():
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/analyze/status/{job_id}")
-async def get_analysis_status(job_id: str):
+async def get_analysis_status(job_id: str, session_id: str = Depends(get_session_id)):
     """Poll for analysis job status. Returns incremental agent_reasoning and investigation_findings while investigating."""
-    if job_id not in _analysis_jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-    job = _analysis_jobs[job_id]
+    session_jobs = _get_session_jobs(session_id)
+    if job_id not in session_jobs:
+        raise HTTPException(status_code=404, detail="Job not found in this session")
+    job = session_jobs[job_id]
     return {
         "status": job.get("status", "unknown"),
         "progress": job.get("progress", ""),
@@ -642,11 +641,11 @@ async def get_analysis_status(job_id: str):
 
 
 @app.post("/analyze-sync")
-async def run_analysis_sync(request: RunAnalysisRequest):
-    """Synchronous analysis for debugging — runs detect+investigate via LangGraph pipeline"""
+async def run_analysis_sync(request: RunAnalysisRequest, session_id: str = Depends(get_session_id)):
+    """Synchronous analysis for debugging -- runs detect+investigate via LangGraph pipeline"""
     try:
         pipeline = PharmaPipeline()
-        result = await pipeline.run_detect_investigate({"hours": request.hours})
+        result = await pipeline.run_detect_investigate({"hours": request.hours}, session_id=session_id)
         anomalies = result.get("anomalies", [])
         profiles = result.get("tag_profiles", {})
         
@@ -672,33 +671,30 @@ async def run_analysis_sync(request: RunAnalysisRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _wait_for_seed():
-    """Wait for background seeding to complete if it's running"""
-    if _seed_task is not None and not _seed_task.done():
-        await _seed_task
-
-
 @app.post("/generate-hypotheses")
-async def generate_hypotheses():
+async def generate_hypotheses(session_id: str = Depends(get_session_id)):
     """Start hypothesis generation in background. Returns job_id immediately."""
     job_id = str(uuid.uuid4())[:8]
-    _analysis_jobs[job_id] = {"status": "running", "progress": "Loading approved anomalies...", "result": None, "error": None}
+    session_jobs = _get_session_jobs(session_id)
+    session_jobs[job_id] = {"status": "running", "progress": "Loading approved anomalies...", "result": None, "error": None}
     
     async def _run():
         try:
             async with async_session_maker() as session:
-                from sqlalchemy import text
-                import json
+                import json as _json
                 
-                _analysis_jobs[job_id]["progress"] = "Running Stage 4: Hypothesis Agent..."
-                result = await session.execute(text("SELECT * FROM anomalies WHERE hitl_status = 'approved'"))
+                session_jobs[job_id]["progress"] = "Running Stage 4: Hypothesis Agent..."
+                result = await session.execute(
+                    text("SELECT * FROM anomalies WHERE session_id = :session_id AND hitl_status = 'approved'"),
+                    {"session_id": session_id}
+                )
                 
                 anomalies = []
                 for row in result.fetchall():
                     row_dict = dict(row._mapping)
                     if isinstance(row_dict.get('evidence'), str):
                         try:
-                            row_dict['evidence'] = json.loads(row_dict['evidence'])
+                            row_dict['evidence'] = _json.loads(row_dict['evidence'])
                         except:
                             row_dict['evidence'] = {}
                     if 'confidence' in row_dict and row_dict['confidence'] is not None:
@@ -707,13 +703,16 @@ async def generate_hypotheses():
                     anomalies.append(row_dict)
                 
                 if not anomalies:
-                    result = await session.execute(text("SELECT * FROM anomalies WHERE hitl_status != 'rejected'"))
+                    result = await session.execute(
+                        text("SELECT * FROM anomalies WHERE session_id = :session_id AND hitl_status != 'rejected'"),
+                        {"session_id": session_id}
+                    )
                     anomalies = []
                     for row in result.fetchall():
                         row_dict = dict(row._mapping)
                         if isinstance(row_dict.get('evidence'), str):
                             try:
-                                row_dict['evidence'] = json.loads(row_dict['evidence'])
+                                row_dict['evidence'] = _json.loads(row_dict['evidence'])
                             except:
                                 row_dict['evidence'] = {}
                         if 'confidence' in row_dict and row_dict['confidence'] is not None:
@@ -722,17 +721,18 @@ async def generate_hypotheses():
                         anomalies.append(row_dict)
                 
                 if not anomalies:
-                    _analysis_jobs[job_id] = {"status": "completed", "progress": "Done", "result": {"status": "no_anomalies", "hypotheses": [], "message": "All anomalies were rejected. You can still generate a report."}, "error": None}
+                    session_jobs[job_id] = {"status": "completed", "progress": "Done", "result": {"status": "no_anomalies", "hypotheses": [], "message": "All anomalies were rejected. You can still generate a report."}, "error": None}
                     return
                 
                 generator = HypothesisAgent()
+                generator.session_id = session_id
                 hypothesis_result = await generator.execute({
                     "anomalies": anomalies
                 })
                 
                 await session.commit()
                 
-                _analysis_jobs[job_id] = {
+                session_jobs[job_id] = {
                     "status": "completed",
                     "progress": "Done",
                     "result": {
@@ -743,30 +743,34 @@ async def generate_hypotheses():
                     "error": None
                 }
         except Exception as e:
-            _analysis_jobs[job_id] = {"status": "failed", "progress": "Failed", "result": None, "error": str(e)}
+            session_jobs[job_id] = {"status": "failed", "progress": "Failed", "result": None, "error": str(e)}
     
     asyncio.create_task(_run())
     return {"job_id": job_id, "status": "started"}
 
 
 @app.post("/generate-reports")
-async def generate_reports():
+async def generate_reports(session_id: str = Depends(get_session_id)):
     """Start report generation in background. Returns job_id immediately."""
     job_id = str(uuid.uuid4())[:8]
-    _analysis_jobs[job_id] = {"status": "running", "progress": "Loading anomalies...", "result": None, "error": None}
+    session_jobs = _get_session_jobs(session_id)
+    session_jobs[job_id] = {"status": "running", "progress": "Loading anomalies...", "result": None, "error": None}
     
     async def _run():
         try:
             async with async_session_maker() as session:
-                from sqlalchemy import text
-                import json
-                _analysis_jobs[job_id]["progress"] = "Running Stage 5: Report Generator..."
-                result = await session.execute(text("""
-                    SELECT a.*, t.tag_name
-                    FROM anomalies a
-                    JOIN tags t ON a.tag_id = t.tag_id
-                    ORDER BY a.detected_at DESC
-                """))
+                import json as _json
+                session_jobs[job_id]["progress"] = "Running Stage 5: Report Generator..."
+                result = await session.execute(
+                    text("""
+                        SELECT a.*, t.tag_name
+                        FROM anomalies a
+                        JOIN tags t ON a.tag_id = t.tag_id
+                        WHERE a.session_id = :session_id
+                        ORDER BY a.detected_at DESC
+                    """),
+                    {"session_id": session_id}
+                )
                 anomalies = [dict(row._mapping) for row in result.fetchall()]
                 
                 for a in anomalies:
@@ -774,7 +778,7 @@ async def generate_reports():
                         a['confidence'] = float(a['confidence'])
                     if 'evidence' in a and isinstance(a['evidence'], str):
                         try:
-                            a['evidence'] = json.loads(a['evidence'])
+                            a['evidence'] = _json.loads(a['evidence'])
                         except:
                             a['evidence'] = {}
                     if not a.get('severity'):
@@ -794,7 +798,7 @@ async def generate_reports():
                     "hypotheses": [{"tag_id": a["tag_id"], "root_cause": a.get("hypothesis", ""), "recommended_action": a.get("recommended_action", ""), "confidence": float(a.get("confidence") or 0), "anomaly_id": a.get("id"), "alternative_causes": [], "pharma_impact": ""} for a in anomalies]
                 })
                 
-                _analysis_jobs[job_id] = {
+                session_jobs[job_id] = {
                     "status": "completed",
                     "progress": "Done",
                     "result": {
@@ -808,7 +812,7 @@ async def generate_reports():
                     "error": None
                 }
         except Exception as e:
-            _analysis_jobs[job_id] = {"status": "failed", "progress": "Failed", "result": None, "error": str(e)}
+            session_jobs[job_id] = {"status": "failed", "progress": "Failed", "result": None, "error": str(e)}
     
     asyncio.create_task(_run())
     return {"job_id": job_id, "status": "started"}
@@ -824,7 +828,6 @@ async def download_report(report_type: str):
     if not reports_dir.exists():
         raise HTTPException(status_code=404, detail="No reports found")
     
-    # Get latest report of specified type
     pattern = f"*.{report_type.lower()}"
     reports = list(reports_dir.glob(pattern))
     
@@ -841,14 +844,15 @@ async def download_report(report_type: str):
 
 
 @app.get("/trace")
-async def get_agent_trace(limit: int = 100):
+async def get_agent_trace(limit: int = 100, session_id: str = Depends(get_session_id)):
     """Get agent execution trace"""
     async with async_session_maker() as session:
         from sqlalchemy import select, desc
-        import json
+        import json as _json
         
         query = (
             select(AgentTrace)
+            .where(AgentTrace.session_id == session_id)
             .order_by(desc(AgentTrace.created_at))
             .limit(limit)
         )
@@ -859,8 +863,8 @@ async def get_agent_trace(limit: int = 100):
         out = []
         for t in traces:
             try:
-                inp = json.loads(t.input) if isinstance(t.input, str) else t.input
-                outp = json.loads(t.output) if isinstance(t.output, str) else t.output
+                inp = _json.loads(t.input) if isinstance(t.input, str) else t.input
+                outp = _json.loads(t.output) if isinstance(t.output, str) else t.output
                 out.append({
                     "id": t.id,
                     "agent_name": t.agent_name,
@@ -881,14 +885,13 @@ async def get_agent_trace(limit: int = 100):
 
 
 @app.delete("/anomalies/clear")
-async def clear_anomalies():
-    """Clear all anomalies (for demo reset)"""
+async def clear_anomalies(session_id: str = Depends(get_session_id)):
+    """Clear all anomalies for this session (for demo reset)"""
     try:
         async with async_session_maker() as session:
-            from sqlalchemy import text
-            await session.execute(text("DELETE FROM anomalies"))
+            await session.execute(text("DELETE FROM anomalies WHERE session_id = :session_id"), {"session_id": session_id})
             await session.commit()
-            return {"status": "success", "message": "All anomalies cleared"}
+            return {"status": "success", "message": "Anomalies cleared for session"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -896,9 +899,9 @@ async def clear_anomalies():
 @app.get("/tags/live")
 async def get_live_tags():
     """Get live simulated tag values merged with metadata"""
-    from datetime import datetime
+    from datetime import datetime as dt
     simulator = TagSimulator(seed=42)
-    readings = simulator.generate_all_tags(datetime.now())
+    readings = simulator.generate_all_tags(dt.now())
     metadata = simulator.get_tag_metadata()
     meta_map = {m["tag_id"]: m for m in metadata}
     for r in readings:
@@ -912,28 +915,27 @@ async def get_live_tags():
 
 
 @app.post("/reset")
-async def full_reset():
-    """Reset everything: clear anomalies, hypotheses, and agent traces"""
+async def full_reset(session_id: str = Depends(get_session_id)):
+    """Reset everything for this session: clear anomalies, hypotheses, and agent traces"""
     try:
         async with async_session_maker() as session:
-            from sqlalchemy import text
-            await session.execute(text("DELETE FROM anomalies"))
-            await session.execute(text("DELETE FROM agent_trace"))
+            await session.execute(text("DELETE FROM anomalies WHERE session_id = :session_id"), {"session_id": session_id})
+            await session.execute(text("DELETE FROM agent_trace WHERE session_id = :session_id"), {"session_id": session_id})
+            await session.execute(text("DELETE FROM tag_readings WHERE session_id = :session_id"), {"session_id": session_id})
             await session.commit()
-            return {"status": "success", "message": "Full reset complete"}
+            return {"status": "success", "message": "Full reset complete for session"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/stats/correlations")
-async def get_correlation_matrix():
+async def get_correlation_matrix(session_id: str = Depends(get_session_id)):
     """Compute live pairwise Pearson correlations for all correlated tag pairs"""
     try:
         from scipy import stats as sp_stats
         import numpy as np
         from datetime import datetime as dt
         from datetime import timedelta as td
-        from sqlalchemy import text as sa_text
         cutoff = dt.utcnow() - td(hours=24)
         
         simulator = TagSimulator(seed=42)
@@ -943,15 +945,15 @@ async def get_correlation_matrix():
         async with async_session_maker() as session:
             for tag_a, tag_b in pairs:
                 rows = await session.execute(
-                    sa_text("""
+                    text("""
                         SELECT a.value AS va, b.value AS vb
                         FROM tag_readings a
                         JOIN tag_readings b ON a.timestamp = b.timestamp AND a.tag_id = :ta AND b.tag_id = :tb
-                        WHERE a.timestamp >= :cutoff
+                        WHERE a.timestamp >= :cutoff AND a.session_id = :session_id
                         ORDER BY a.timestamp
                         LIMIT 2000
                     """),
-                    {"ta": tag_a, "tb": tag_b, "cutoff": cutoff}
+                    {"ta": tag_a, "tb": tag_b, "cutoff": cutoff, "session_id": session_id}
                 )
                 all_pairs = rows.fetchall()
                 n = len(all_pairs)
@@ -1014,12 +1016,12 @@ async def get_integrity_checks():
         },
         {
             "id": 3, "name": "Impossible Readings", "method": "Physical limits per data type",
-            "detects": "Sensor reading outside physical possibility", "threshold": "e.g. T < -273.15°C",
+            "detects": "Sensor reading outside physical possibility", "threshold": "e.g. T < -273.15\u00b0C",
             "is_rule_based": True
         },
         {
             "id": 4, "name": "Rate-of-Change", "method": "Delta between consecutive readings",
-            "detects": "Physically impossible step changes", "threshold": "Type-specific thresholds (e.g. >50°C/step)",
+            "detects": "Physically impossible step changes", "threshold": "Type-specific thresholds (e.g. >50\u00b0C/step)",
             "is_rule_based": True
         },
         {
@@ -1034,7 +1036,7 @@ async def get_integrity_checks():
         },
         {
             "id": 7, "name": "CIP Temperature Low", "method": "CIP supply temp < sterilization threshold",
-            "detects": "Incomplete cleaning cycle", "threshold": "TI-601 < 70°C for >30 readings",
+            "detects": "Incomplete cleaning cycle", "threshold": "TI-601 < 70\u00b0C for >30 readings",
             "is_rule_based": True
         },
         {
@@ -1044,11 +1046,11 @@ async def get_integrity_checks():
         },
         {
             "id": 9, "name": "Cross-Sensor Corroboration", "method": "Segmented Pearson correlation + trend direction analysis against witness sensors",
-            "detects": "Sensor reading is PLAUSIBLE but WRONG — contradicted by correlated sensors",
+            "detects": "Sensor reading is PLAUSIBLE but WRONG \u2014 contradicted by correlated sensors",
             "threshold": "Correlation drop > 0.2 with contradicted trend direction",
             "is_rule_based": True,
             "is_novel": True,
-            "why_novel": "No historian or analytics product detects sensors that are wrong-but-plausible. This check cross-references physically-correlated sensors — the same logic a process engineer uses on a whiteboard."
+            "why_novel": "No historian or analytics product detects sensors that are wrong-but-plausible. This check cross-references physically-correlated sensors \u2014 the same logic a process engineer uses on a whiteboard."
         },
     ]
 
@@ -1057,32 +1059,32 @@ async def get_integrity_checks():
 async def get_pipeline_info():
     """Return pipeline architecture for the Stats page"""
     return {
-        "orchestration": "LangGraph StateGraph (v0.2.x) — 5-stage pipeline with conditional HITL edge",
+        "orchestration": "LangGraph StateGraph (v0.2.x) \u2014 5-stage pipeline with conditional HITL edge",
         "stages": [
             {
                 "id": 1, "name": "Detection Engine", "type": "deterministic",
                 "engine": "9 rule-based checks, no LLM",
-                "flow": "9 baseline checks → dedup → priority sort → cap at 2 → return anomalies"
+                "flow": "9 baseline checks \u2192 dedup \u2192 priority sort \u2192 cap at 2 \u2192 return anomalies"
             },
             {
                 "id": 2, "name": "Investigation Agent", "type": "ai_agent",
                 "engine": "LLM-directed tool calls with 4 tools (query_historian, query_events, query_maintenance, query_lab_results) + ChatOpenAI (Groq). LLM picks which tools to call per anomaly.",
-                "flow": "Sequential per-anomaly (2 max): LLM decides tools → calls 1-2 tools → summarizes → findings"
+                "flow": "Sequential per-anomaly (2 max): LLM decides tools \u2192 calls 1-2 tools \u2192 summarizes \u2192 findings"
             },
             {
                 "id": 3, "name": "HITL Gate", "type": "human",
                 "engine": "Human reviews investigation findings",
-                "flow": "Investigation findings → human approves/rejects → approved anomalies"
+                "flow": "Investigation findings \u2192 human approves/rejects \u2192 approved anomalies"
             },
             {
                 "id": 4, "name": "Hypothesis Agent", "type": "ai",
                 "engine": "Single LLM call with investigation findings + ChatOpenAI (Groq) + OutputGuardrail",
-                "flow": "Approved anomalies + investigation findings → single LLM call → root cause hypotheses"
+                "flow": "Approved anomalies + investigation findings \u2192 single LLM call \u2192 root cause hypotheses"
             },
             {
                 "id": 5, "name": "Report Generator", "type": "ai",
                 "engine": "Jinja2 + ChatOpenAI (Groq) + OutputGuardrail",
-                "flow": "All evidence → LLM writes executive narrative → PDF/HTML/JSON output"
+                "flow": "All evidence \u2192 LLM writes executive narrative \u2192 PDF/HTML/JSON output"
             },
         ],
         "guardrail": {
@@ -1094,12 +1096,12 @@ async def get_pipeline_info():
         "hitl": {
             "name": "Human-in-the-Loop Gate",
             "position": "Between Investigation (Stage 2) and Hypothesis (Stage 4)",
-            "purpose": "Human reviews AI investigation findings before AI generates root causes — prevents AI from acting on false alarms",
-            "statuses": ["pending → approved → hypothesis generated", "pending → rejected → no action"]
+            "purpose": "Human reviews AI investigation findings before AI generates root causes \u2014 prevents AI from acting on false alarms",
+            "statuses": ["pending \u2192 approved \u2192 hypothesis generated", "pending \u2192 rejected \u2192 no action"]
         },
         "silent_lie": {
             "concept": "A sensor that reads within normal range but is wrong. Passes quality codes, passes threshold checks, but contradicts its correlated sensors.",
-            "example": "TI-101 reports 172°C (within 150-200 range, Good quality). But PI-101 trends up (suggesting 175°C+) and FI-201 rises (cooling compensating for heat you don't see). The sensor is wrong.",
+            "example": "TI-101 reports 172\u00b0C (within 150-200 range, Good quality). But PI-101 trends up (suggesting 175\u00b0C+) and FI-201 rises (cooling compensating for heat you don't see). The sensor is wrong.",
             "detection": "Check 9: segmented window correlation + trend direction analysis against witness sensors"
         }
     }
@@ -1124,7 +1126,7 @@ async def get_tech_stack():
                 {"name": "Uvicorn", "role": "ASGI server with hot-reload", "icon": "Server"},
                 {"name": "SQLAlchemy 2.0", "role": "Async PostgreSQL ORM", "icon": "Database"},
                 {"name": "Pydantic v2", "role": "Schema validation and settings management", "icon": "Shield"},
-                {"name": "Guardrails AI", "role": "Output guardrails — PII redaction, pharma-sensitive filtering, credential blocking, dangerous recommendation detection", "icon": "ShieldAlert"},
+                {"name": "Guardrails AI", "role": "Output guardrails \u2014 PII redaction, pharma-sensitive filtering, credential blocking, dangerous recommendation detection", "icon": "ShieldAlert"},
             ]
         },
         {
@@ -1138,7 +1140,7 @@ async def get_tech_stack():
         {
             "category": "Output Safety",
             "items": [
-                {"name": "OutputGuardrail", "role": "Custom — PII redaction, pharma-sensitive blocking, confidence bounding", "icon": "Shield"},
+                {"name": "OutputGuardrail", "role": "Custom \u2014 PII redaction, pharma-sensitive blocking, confidence bounding", "icon": "Shield"},
                 {"name": "Regex + pattern matching", "role": "SSN/phone/email/IP/batch number detection", "icon": "Search"},
             ]
         },
@@ -1162,7 +1164,7 @@ async def get_tech_stack():
         {
             "category": "Infrastructure",
             "items": [
-                {"name": "PostgreSQL", "role": "Primary database — readings, anomalies, traces, hypotheses", "icon": "Database"},
+                {"name": "PostgreSQL", "role": "Primary database \u2014 readings, anomalies, traces, hypotheses", "icon": "Database"},
                 {"name": "asyncpg", "role": "Async PostgreSQL driver", "icon": "Server"},
             ]
         },

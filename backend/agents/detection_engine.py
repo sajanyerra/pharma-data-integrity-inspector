@@ -43,8 +43,8 @@ class DetectionEngine(BaseAgent):
     async def _load_all_readings(self, hours: int) -> Dict[str, Dict]:
         cutoff_time = datetime.utcnow() - timedelta(hours=hours)
         all_rows = await self.db_conn.fetch(
-            "SELECT tag_id, value, quality_code, timestamp FROM tag_readings WHERE timestamp >= $1 ORDER BY tag_id, timestamp",
-            cutoff_time,
+            "SELECT tag_id, value, quality_code, timestamp FROM tag_readings WHERE timestamp >= $1 AND session_id = $2 ORDER BY tag_id, timestamp",
+            cutoff_time, self.session_id,
         )
         if len(all_rows) > 100:
             cache = {}
@@ -82,6 +82,8 @@ class DetectionEngine(BaseAgent):
         return cache
 
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        if input_data.get("session_id"):
+            self.session_id = input_data["session_id"]
         await self.connect_db()
         try:
             hours = input_data.get("hours", 24)
@@ -291,7 +293,8 @@ class DetectionEngine(BaseAgent):
                                      "pharma_impact": "Incomplete cleaning - contamination risk"})
         qa = await self.db_conn.fetch(
             "SELECT tag_id, quality_code, COUNT(*) as cnt FROM tag_readings "
-            "WHERE timestamp >= NOW() - INTERVAL '24 hours' GROUP BY tag_id, quality_code")
+            "WHERE timestamp >= NOW() - INTERVAL '24 hours' AND session_id = $1 GROUP BY tag_id, quality_code",
+            self.session_id)
         tq = {}
         for r in qa:
             tid = r["tag_id"]

@@ -55,6 +55,7 @@ class BaseAgent(ABC):
     
     def __init__(self, name: str):
         self.name = name
+        self.session_id = "default"
         self.db_conn = None
         self.callback = LangSmithCallback(name)
         self.callbacks = [self.callback]
@@ -75,8 +76,8 @@ class BaseAgent(ABC):
             input_json = json.dumps(input_data) if isinstance(input_data, (dict, list)) else str(input_data)
             output_json = json.dumps(output_data) if isinstance(output_data, (dict, list)) else str(output_data)
             await self.db_conn.execute(
-                "INSERT INTO agent_trace (agent_name, input, output) VALUES ($1, $2, $3)",
-                self.name, input_json, output_json
+                "INSERT INTO agent_trace (session_id, agent_name, input, output) VALUES ($1, $2, $3, $4)",
+                self.session_id, self.name, input_json, output_json
             )
         except Exception as e:
             print(f"Warning: Could not save trace: {e}")

@@ -22,6 +22,7 @@ class TagReading(Base):
     __tablename__ = "tag_readings"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(36), nullable=False, default="default")
     tag_id = Column(String(20), ForeignKey("tags.tag_id"))
     timestamp = Column(DateTime(timezone=True), nullable=False)
     value = Column(DECIMAL)
@@ -34,6 +35,7 @@ class Anomaly(Base):
     __tablename__ = "anomalies"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(36), nullable=False, default="default")
     tag_id = Column(String(20), ForeignKey("tags.tag_id"))
     anomaly_type = Column(String(50))
     confidence = Column(DECIMAL)
@@ -49,6 +51,7 @@ class AgentTrace(Base):
     __tablename__ = "agent_trace"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(36), nullable=False, default="default")
     agent_name = Column(String(50))
     input = Column(JSONB)
     output = Column(JSONB)
