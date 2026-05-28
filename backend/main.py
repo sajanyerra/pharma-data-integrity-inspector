@@ -1036,8 +1036,8 @@ async def get_pipeline_info():
             },
             {
                 "id": 2, "name": "Investigation Agent", "type": "ai_agent",
-                "engine": "4 tools (query_historian, query_events, query_maintenance, query_lab_results) + ChatOpenAI (Groq). Tool selection per anomaly type.",
-                "flow": "Per anomaly: type-mapped tool calls → single LLM summary → investigation findings"
+                "engine": "LLM-directed tool calls with 4 tools (query_historian, query_events, query_maintenance, query_lab_results) + ChatOpenAI (Groq). LLM picks which tools to call per anomaly.",
+                "flow": "Concurrent per-anomaly: LLM decides tools → calls 1-2 tools → summarizes → findings"
             },
             {
                 "id": 3, "name": "HITL Gate", "type": "human",

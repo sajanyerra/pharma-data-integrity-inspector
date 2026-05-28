@@ -21,7 +21,7 @@ const AGENT_COLORS = {
 
 const AGENT_DESCRIPTIONS = {
   DetectionEngine: { title: 'Stage 1: Detection Engine', what: '9 deterministic rule checks. No LLM.', why: 'Deterministic-first ensures 100% coverage and auditability.' },
-  InvestigationAgent: { title: 'Stage 2: Investigation Agent', what: 'Investigates anomalies with 4 tools (Historian, MES, CMMS, LIMS). Different anomaly types trigger different tool sequences.', why: 'Tool selection per anomaly type provides targeted investigation — drift checks historian+maintenance, cross-sensor checks historian+lab results.' },
+  InvestigationAgent: { title: 'Stage 2: Investigation Agent', what: 'LLM picks which of 4 tools to call per anomaly (Historian, MES, CMMS, LIMS). Different anomalies → different tool choices.', why: 'Genuine agency — the LLM decides which external systems to query based on anomaly type and evidence.' },
   HypothesisAgent: { title: 'Stage 4: Hypothesis Agent', what: 'Single LLM call with investigation findings and domain knowledge base.', why: 'Focused reasoning from collected evidence. Guardrail validates output.' },
   ReportGenerator: { title: 'Stage 5: Report Generator', what: 'Compiles findings into PDF, HTML, JSON. AI writes executive narrative.', why: 'Audit-ready docs for FDA 21 CFR Part 11.' },
 }
