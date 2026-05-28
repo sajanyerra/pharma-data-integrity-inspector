@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { AlertTriangle, AlertCircle, AlertOctagon, CheckCircle, ChevronRight, Filter, RefreshCw, Trash, ArrowRight, ShieldCheck, Check, Info, Eye, Brain } from 'lucide-react'
+import { AlertTriangle, AlertCircle, AlertOctagon, CheckCircle, ChevronRight, Filter, RefreshCw, Trash, ArrowRight, ShieldCheck, Check, Info, Eye, Brain, Loader2 } from 'lucide-react'
 import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
 
@@ -44,9 +44,11 @@ export default function AnomalyDetection() {
   const [anomalies, setAnomalies] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
-  const [runningAnalysis, setRunningAnalysis] = useState(false)
+  const [analysisPhase, setAnalysisPhase] = useState(null)
   const [showChecks, setShowChecks] = useState(false)
   const [agentReasoning, setAgentReasoning] = useState('')
+  const [investigating, setInvestigating] = useState(false)
+  const pollRef = useRef(null)
   const navigate = useNavigate()
 
   const fetchAnomalies = async () => {
@@ -58,55 +60,78 @@ export default function AnomalyDetection() {
   }
 
   useEffect(() => { fetchAnomalies() }, [])
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
   const runAnalysis = async () => {
-    setRunningAnalysis(true)
+    setAnalysisPhase('detecting')
+    setInvestigating(false)
+    setAgentReasoning('')
     try {
       const startRes = await axios.post(`${API_BASE}/analyze`, { hours: 24 })
       const jobId = startRes.data.job_id
+      const initialAnomalies = startRes.data.anomalies_detected || 0
+
+      if (initialAnomalies > 0) {
+        setAnalysisPhase('investigating')
+        setInvestigating(true)
+        await fetchAnomalies()
+      }
+
       if (!jobId) {
-        setRunningAnalysis(false)
+        setAnalysisPhase(null)
         alert('Analysis failed to start — no job ID returned.')
         return
       }
-      let pollAttempts = 0
-      const poll = setInterval(async () => {
-        pollAttempts++
-        if (pollAttempts > 60) {
-          clearInterval(poll)
-          setRunningAnalysis(false)
-          alert('Analysis timed out. Please try again.')
+
+      let attempts = 0
+      pollRef.current = setInterval(async () => {
+        attempts++
+        if (attempts > 80) {
+          clearInterval(pollRef.current)
+          setAnalysisPhase(null)
+          setInvestigating(false)
           return
         }
         try {
           const statusRes = await axios.get(`${API_BASE}/analyze/status/${jobId}`)
-          const { status, progress, result, error } = statusRes.data
+          const { status, progress, agent_reasoning, result, error } = statusRes.data
+
+          if (agent_reasoning) {
+            setAgentReasoning(agent_reasoning)
+          }
+          if (progress && progress.startsWith('Stage 2')) {
+            setAnalysisPhase('investigating')
+            setInvestigating(true)
+          }
+
           if (status === 'completed') {
-            clearInterval(poll)
-            setRunningAnalysis(false)
+            clearInterval(pollRef.current)
+            setAnalysisPhase(null)
+            setInvestigating(false)
             await fetchAnomalies()
             if (result && result.agent_reasoning) {
               setAgentReasoning(result.agent_reasoning)
             }
-            if (result && result.anomalies_detected === 0) {
-              alert('Analysis complete — no anomalies detected.')
-            }
           } else if (status === 'failed') {
-            clearInterval(poll)
-            setRunningAnalysis(false)
+            clearInterval(pollRef.current)
+            setAnalysisPhase(null)
+            setInvestigating(false)
             alert('Analysis failed: ' + (error || 'Unknown error'))
           }
         } catch (err) {
-          clearInterval(poll)
-          setRunningAnalysis(false)
-          alert('Polling error: ' + (err.message || 'Network error'))
+          clearInterval(pollRef.current)
+          setAnalysisPhase(null)
+          setInvestigating(false)
         }
-      }, 3000)
+      }, 1500)
     } catch (err) {
-      setRunningAnalysis(false)
+      setAnalysisPhase(null)
       alert('Failed to start analysis: ' + (err.message || 'Network error'))
     }
   }
+
+  const isRunning = analysisPhase !== null
+  const phaseLabel = analysisPhase === 'detecting' ? 'Detecting...' : analysisPhase === 'investigating' ? 'Investigating...' : null
 
   const filteredAnomalies = filter === 'all' ? anomalies : anomalies.filter(a => a.severity === filter)
   const countBySeverity = {
@@ -124,11 +149,11 @@ export default function AnomalyDetection() {
           <p className="text-muted-foreground text-sm mt-0.5">9 integrity checks applied across 20 tags</p>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={runAnalysis} disabled={runningAnalysis} className="btn-primary flex items-center gap-2">
-            <RefreshCw className={`w-4 h-4 ${runningAnalysis ? 'animate-spin' : ''}`} />
-            {runningAnalysis ? 'Analyzing (~8s)...' : 'Run Analysis'}
+          <button onClick={runAnalysis} disabled={isRunning} className="btn-primary flex items-center gap-2">
+            <RefreshCw className={`w-4 h-4 ${isRunning ? 'animate-spin' : ''}`} />
+            {phaseLabel || 'Run Analysis'}
           </button>
-          <button onClick={async () => { try { await axios.delete(`${API_BASE}/anomalies/clear`); await fetchAnomalies() } catch {} }} className="btn-secondary flex items-center gap-2">
+          <button onClick={async () => { try { await axios.delete(`${API_BASE}/anomalies/clear`); await fetchAnomalies(); setAgentReasoning('') } catch {} }} className="btn-secondary flex items-center gap-2">
             <Trash className="w-4 h-4" />Clear
           </button>
         </div>
@@ -139,7 +164,7 @@ export default function AnomalyDetection() {
         <span>Each detected anomaly includes the specific check that failed, the evidence, and why it matters.</span>
       </div>
 
-      {/* 10 Checks Grid */}
+      {/* 9 Checks Grid */}
       <div className="card p-4">
         <button onClick={() => setShowChecks(!showChecks)} className="flex items-center justify-between w-full text-left">
           <span className="text-sm font-semibold text-foreground">9 Data Integrity Checks</span>
@@ -157,13 +182,25 @@ export default function AnomalyDetection() {
         )}
       </div>
 
+      {/* Investigation in progress indicator */}
+      {investigating && (
+        <div className="card p-3 border-l-4 border-l-blue-500">
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+            <span className="text-sm font-medium text-foreground">Investigation Agent is working...</span>
+            <span className="text-xs text-muted-foreground">LLM picks tools and queries external systems per anomaly</span>
+          </div>
+        </div>
+      )}
+
       {/* Agent Reasoning Panel */}
       {agentReasoning && (
         <div className="card p-4">
           <div className="flex items-center gap-2 mb-2">
             <Brain className="w-4 h-4 text-violet-500" />
             <span className="text-sm font-semibold text-foreground">Investigation Agent Reasoning</span>
-            <span className="text-[10px] text-muted-foreground">Investigation Agent used tools (Historian, MES, CMMS, LIMS) to investigate</span>
+            {investigating && <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />}
+            <span className="text-[10px] text-muted-foreground">LLM directs tool calls (Historian, MES, CMMS, LIMS) per anomaly type</span>
           </div>
           <div className="bg-secondary rounded-lg p-3 max-h-48 overflow-y-auto">
             <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono">{agentReasoning}</pre>
@@ -205,10 +242,10 @@ export default function AnomalyDetection() {
               const isSilentLie = anomaly.is_silent_lie || anomaly.anomaly_type === 'cross_sensor_inconsistency'
               return (
                 <motion.div key={anomaly.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: index * 0.03 }} className={`p-4 hover:bg-secondary/50 transition-colors ${isSilentLie ? 'border-l-4 border-l-indigo-500 bg-indigo-50/50 dark:bg-indigo-900/10' : ''}`}>
-                    <div className="flex items-start gap-3">
-                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${isSilentLie ? 'bg-indigo-100 text-indigo-800 border border-indigo-300 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700' : severityConfig.color}`}>
-                        {isSilentLie ? <Eye className="w-4 h-4" /> : <SeverityIcon className="w-4 h-4" />}
-                    </div>
+                  <div className="flex items-start gap-3">
+                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${isSilentLie ? 'bg-indigo-100 text-indigo-800 border border-indigo-300 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700' : severityConfig.color}`}>
+                      {isSilentLie ? <Eye className="w-4 h-4" /> : <SeverityIcon className="w-4 h-4" />}
+                  </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="font-semibold text-foreground text-sm">{anomaly.tag_id}</span>

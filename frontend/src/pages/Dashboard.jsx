@@ -65,18 +65,19 @@ export default function Dashboard({ liveTags = [] }) {
           </div>
           <div className="hidden md:flex items-center gap-0.5 shrink-0">
             {[
-              { icon: AlertTriangle, label: 'Detect', color: 'bg-violet-500' },
-              { icon: Search, label: 'Investigate', color: 'bg-blue-500' },
-              { icon: ShieldCheck, label: 'HITL', color: 'bg-amber-500' },
-              { icon: Brain, label: 'Hypothesize', color: 'bg-teal-500' },
-              { icon: FileText, label: 'Report', color: 'bg-orange-500' },
+              { icon: AlertTriangle, label: 'Detect', sub: 'Code', color: 'bg-violet-500' },
+              { icon: Search, label: 'Investigate', sub: 'AI + 4 Tools', color: 'bg-blue-500' },
+              { icon: ShieldCheck, label: 'HITL', sub: 'You', color: 'bg-amber-500' },
+              { icon: Brain, label: 'Hypothesize', sub: 'AI', color: 'bg-teal-500' },
+              { icon: FileText, label: 'Report', sub: 'AI + Tmpl', color: 'bg-orange-500' },
             ].map((s, i, arr) => (
               <div key={s.label} className="flex items-center">
-                <div className="flex flex-col items-center gap-1 px-2">
+                <div className="flex flex-col items-center gap-0.5 px-2">
                   <div className={`w-8 h-8 ${s.color} rounded-lg flex items-center justify-center`}>
                     <s.icon className="w-4 h-4 text-white" />
                   </div>
-                  <span className="text-[8px] text-slate-400">{s.label}</span>
+                  <span className="text-[8px] text-slate-400 font-medium">{s.label}</span>
+                  <span className="text-[7px] text-slate-500">{s.sub}</span>
                 </div>
                 {i < arr.length - 1 && <ChevronRight className="w-3 h-3 text-slate-500" />}
               </div>
