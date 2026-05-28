@@ -1,6 +1,6 @@
 # Pharma Data Integrity Inspector
 
-**3 AI agents that catch sensor data your historian misses — including sensors that are wrong but look perfectly normal.**
+**5-stage pipeline that catches sensor data your historian misses — including sensors that are wrong but look perfectly normal.**
 
 Most pharma data quality tools check each sensor in isolation: thresholds, quality codes, range checks. They all miss the same thing — a sensor reading 172°C when the real temperature is 175°C. It passes every check. Quality code says "Good." No alarm fires. But the batch is compromised.
 
@@ -18,12 +18,14 @@ Cross-Sensor Corroboration fixes this by cross-referencing physically-coupled se
 
 ## What It Does
 
-- **3 AI agents** orchestrated by LangGraph: Anomaly Detector (with inline profiling) → (HITL gate) → Hypothesis Generator → Report Generator
+- **5-stage pipeline** with 2 genuine AI agents orchestrated by LangGraph: Detection Engine (code) → Investigation Agent (ReAct + 4 tools) → (HITL gate) → Hypothesis Agent → Report Generator
 - **9 integrity checks** — 8 standard + Check 9: Cross-Sensor Corroboration (novel)
-- **Human-in-the-Loop gate** between Agent 2 and Agent 3 — you approve anomalies before AI generates root causes (FDA 21 CFR Part 11 aligned)
+- **Genuine ReAct agent** — the Investigation Agent queries 4 external systems (PI Historian, MES, CMMS, LIMS) via tools the LLM decides to call based on anomaly type
+- **Human-in-the-Loop gate** between Investigation and Hypothesis — you review AI investigation findings before AI generates root causes (FDA 21 CFR Part 11 aligned)
 - **Output Guardrail** — PII, batch numbers, credentials, and dangerous recommendations are blocked before any AI output reaches the user
 - **Random anomalies each run** — 2-4 from a pool of 6 types (drift, stuck, spike, noise_burst, silent_lie), no tag overlap
-- **Fast detection** — ~5-8s instead of ~30s thanks to merged profiler, single SQL query, and async LLM calls
+- **Fast detection** — ~3-4s for deterministic checks, ~2-3s per anomaly for investigation
+- **Token-efficient** — ~3-5K tokens per run total
 - **Dark mode** with navy palette, guided pipeline steps as navigation, "Next Step" CTAs
 - **Stats for Nerds** page for curious learners
 
@@ -40,13 +42,15 @@ Most data quality tools operate per-sensor. If a reading is within range and has
 ```
 TagSimulator (20 tags, 30s interval, causal couplings + random 2-4 anomalies)
     ↓
-Agent 2: Anomaly Detector ─── 1 bulk query + inline profiles + 9 checks + Llama 3.1 (async) ─── flags issues
+Stage 1: Detection Engine ─── 1 bulk query + 9 deterministic checks ─── flags issues (no LLM)
     ↓
-HITL Gate ─── human approves/rejects ─── FDA 21 CFR Part 11
+Stage 2: Investigation Agent ─── ReAct + 4 tools (Historian, MES, CMMS, LIMS) ─── findings per anomaly
     ↓
-Agent 3: Hypothesis Generator ─── Llama 3.1 + domain KB ─── root causes + remediation
+Stage 3: HITL Gate ─── human reviews AI investigation findings ─── FDA 21 CFR Part 11
     ↓
-Agent 4: Report Generator ─── Llama 3.1 + Jinja2 ─── PDF/HTML/JSON
+Stage 4: Hypothesis Agent ─── Single LLM call with investigation findings ─── root causes + remediation
+    ↓
+Stage 5: Report Generator ─── LLM narrative + Jinja2 ─── PDF/HTML/JSON
     ↓
 OutputGuardrail ─── PII, pharma-sensitive, dangerous recs ─── blocks before user sees
 ```
@@ -174,12 +178,12 @@ The TagSimulator injects 2-4 random anomalies per reseed from this pool (no tag 
 | GET | `/health` | System status |
 | GET | `/tags/live` | Live tag values (30s refresh) |
 | GET | `/anomalies` | Detected anomalies |
-| POST | `/analyze` | Run Anomaly Detector pipeline |
+| POST | `/analyze` | Run pipeline (detect + investigate) |
 | POST | `/anomalies/select-batch` | HITL approve/reject |
-| POST | `/generate-hypotheses` | Agent 3 root causes |
-| POST | `/generate-reports` | Agent 4 reports |
+| POST | `/generate-hypotheses` | Stage 4 root causes |
+| POST | `/generate-reports` | Stage 5 reports |
 | GET | `/reports/download/{type}` | Download PDF/HTML/JSON |
-| GET | `/trace` | Agent execution log |
+| GET | `/trace` | Stage execution log |
 | GET | `/stats/correlations` | Live correlation matrix |
 | GET | `/stats/causal-groups` | Causal model definition |
 | GET | `/stats/integrity-checks` | All 9 check metadata |

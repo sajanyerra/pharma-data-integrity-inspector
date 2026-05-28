@@ -6,18 +6,18 @@
 graph TB
     subgraph Frontend ["React + Vite + Tailwind"]
         Dashboard["Dashboard<br/>Live tag values (lifted state)"]
-        AnomalyPage["Anomaly Detection<br/>9 checks + results"]
-        HITL["HITL Review<br/>Approve / Reject"]
+        AnomalyPage["Anomaly Detection<br/>9 checks + investigation reasoning"]
+        HITL["HITL Review<br/>Approve / Reject investigation findings"]
         HypoPage["Hypothesis View<br/>Root causes"]
         ReportPage["Report Preview<br/>PDF / HTML / JSON"]
-        TracePage["Trace View<br/>Agent I/O logs"]
+        TracePage["Pipeline Trace<br/>Stage I/O logs"]
         StatsPage["Stats for Nerds<br/>Correlations + tech stack"]
     end
 
     subgraph Backend ["FastAPI Backend"]
         API["REST API<br/>/analyze, /anomalies, /tags, etc."]
-        Pipeline["LangGraph StateGraph<br/>3-Agent Pipeline"]
-        Agents["Agent Layer"]
+        Pipeline["LangGraph StateGraph<br/>5-Stage Pipeline"]
+        Stages["Stage Layer"]
         Guardrail["OutputGuardrail<br/>PII / pharma / credentials"]
         Simulator["TagSimulator<br/>20 tags, causal couplings, random 2-4 anomalies"]
     end
@@ -30,9 +30,9 @@ graph TB
     end
 
     subgraph LLM ["Groq Llama 3.1 8B Instant"]
-        LLM2["Agent 2: Anomaly Detector<br/>(async prioritization)"]
-        LLM3["Agent 3: Hypothesis Generator"]
-        LLM4["Agent 4: Report Generator"]
+        Inv["Stage 2: Investigation Agent<br/>(ReAct + 4 tools)"]
+        Hyp["Stage 4: Hypothesis Agent<br/>(single LLM call)"]
+        Rep["Stage 5: Report Generator<br/>(narrative)"]
     end
 
     Dashboard -->|GET /tags/live| API
@@ -45,16 +45,17 @@ graph TB
 
     API --> Pipeline
     API --> Simulator
-    Pipeline --> Agents
-    Agents --> LLM2
-    Agents --> LLM3
-    Agents --> LLM4
-    LLM3 --> Guardrail
-    LLM4 --> Guardrail
-    Agents --> Tags
-    Agents --> Readings
-    Agents --> AnomaliesTable
-    Agents --> Traces
+    Pipeline --> Stages
+    Stages -->|Stage 2| Inv
+    Stages -->|Stage 4| Hyp
+    Stages -->|Stage 5| Rep
+    Inv --> Guardrail
+    Hyp --> Guardrail
+    Rep --> Guardrail
+    Stages --> Tags
+    Stages --> Readings
+    Stages --> AnomaliesTable
+    Stages --> Traces
 ```
 
 ## Data Flow (Step by Step)
@@ -65,10 +66,11 @@ sequenceDiagram
     participant F as Frontend
     participant B as FastAPI
     participant P as LangGraph Pipeline
-    participant A2 as Agent 2<br/>Anomaly Detector
+    participant S1 as Stage 1<br/>Detection Engine
+    participant S2 as Stage 2<br/>Investigation Agent
     participant HITL as HITL Gate
-    participant A3 as Agent 3<br/>Hypothesis Generator
-    participant A4 as Agent 4<br/>Report Generator
+    participant S4 as Stage 4<br/>Hypothesis Agent
+    participant S5 as Stage 5<br/>Report Generator
     participant G as OutputGuardrail
     participant DB as PostgreSQL
 
@@ -77,86 +79,96 @@ sequenceDiagram
     B->>B: Clear old anomalies + traces
     B->>P: PharmaPipeline.run()
 
-    Note over P: Pipeline goes straight to detect —<br/>no separate profiler pass
+    P->>S1: detect_step(state)
+    S1->>DB: Single bulk query: all readings (1 query)
+    S1->>S1: 9 rule-based checks (deterministic)
+    S1->>S1: Dedup by tag_id, cap at 4, priority sort
+    S1-->>P: {anomalies, tag_profiles}
 
-    P->>A2: detect_step(state)
-    A2->>DB: Single bulk query: all readings (1 query)
-    A2->>A2: Compute profiles inline (numpy)
-    A2->>A2: 9 rule-based checks
-    A2->>A2: Dedup by tag_id, cap at 4, priority sort
-    A2-->>P: {anomalies, tag_profiles} — fast return
-    A2-->>A2: Background: LLM prioritization (async)
+    P->>S2: investigate_step(state)
+    S2->>S2: Per anomaly: ReAct agent decides which tools to call
+    S2->>S2: query_historian / query_events / query_maintenance / query_lab_results
+    S2->>G: guardrail.sanitize_text()
+    G-->>S2: Redacted findings
+    S2->>DB: INSERT agent_trace (reasoning + tool calls)
+    S2-->>P: {anomalies, investigation_findings}
 
-    P->>B: Return anomalies + profiles
+    P->>B: Return anomalies + investigation findings
     B->>DB: INSERT INTO anomalies (hitl_status='pending')
-    B-->>F: {anomalies_detected: 2-4, message: "Awaiting HITL"}
-    F-->>U: Show anomalies, prompt review
+    B-->>F: {anomalies_detected: 2-4, message: "Awaiting HITL", investigation_findings}
+    F-->>U: Show anomalies + investigation reasoning, prompt review
 
-    Note over U: Human reviews anomalies
+    Note over U: Human reviews AI investigation findings
     U->>F: Approve/reject anomalies
     F->>B: POST /anomalies/select-batch
     B->>DB: UPDATE anomalies SET hitl_status
 
     U->>F: Click "Generate Hypotheses"
     F->>B: POST /generate-hypotheses
-    B->>A3: execute({approved_anomalies})
-    A3->>A3: LLM proposes root causes
-    A3->>G: guardrail.sanitize_text()
-    G-->>A3: Redacted output
-    A3->>DB: UPDATE anomalies SET hypothesis, recommended_action
-    A3-->>B: {hypotheses, summary}
+    B->>S4: execute({approved_anomalies + investigation findings})
+    S4->>S4: Single LLM call per anomaly
+    S4->>G: guardrail.sanitize_text()
+    G-->>S4: Redacted output
+    S4->>DB: UPDATE anomalies SET hypothesis, recommended_action
+    S4-->>B: {hypotheses, summary}
     B-->>F: Hypothesis results
 
     U->>F: Click "Generate Report"
     F->>B: POST /generate-reports
-    B->>A4: execute({anomalies, hypotheses})
-    A4->>A4: LLM writes executive narrative
-    A4->>G: guardrail.sanitize_text() + check_recommendation()
-    G-->>A4: Safe output
-    A4->>A4: ReportLab PDF + Jinja2 HTML
-    A4-->>B: {pdf_path, html_path, json_path}
+    B->>S5: execute({anomalies, hypotheses})
+    S5->>S5: LLM writes executive narrative
+    S5->>G: guardrail.sanitize_text() + check_recommendation()
+    G-->>S5: Safe output
+    S5->>S5: ReportLab PDF + Jinja2 HTML
+    S5-->>B: {pdf_path, html_path, json_path}
     B-->>F: Report download links
 ```
 
-## 3-Agent Pipeline (LangGraph)
-
-Agent 1 (Data Profiler) was merged into Agent 2. The detector now computes statistical profiles inline from the same data cache, eliminating a full DB round-trip and LLM call.
+## 5-Stage Pipeline (LangGraph)
 
 ```mermaid
 stateDiagram-v2
     [*] --> Detect: POST /analyze
-    Detect --> HITLGate: Anomalies found?
+    Detect --> Investigate: Anomalies found?
+    Investigate --> HITLGate: Investigation complete
 
     HITLGate --> Hypothesize: Human approves
     HITLGate --> [*]: No anomalies → END
 
-    Hypothesize --> Report: Agent 3 results
+    Hypothesize --> Report: Stage 4 results
     Report --> [*]: PDF/HTML/JSON
 
     note right of Detect
-        Agent 2: AnomalyDetector
+        Stage 1: Detection Engine
+        Deterministic code, no LLM
         1 bulk DB query for ALL readings
-        Compute profiles inline (numpy)
         9 rule-based checks
         Dedup by tag_id, cap 4
-        LLM prioritization runs async
+    end note
+
+    note right of Investigate
+        Stage 2: Investigation Agent (ReAct)
+        Genuine ReAct agent with 4 tools:
+        query_historian, query_events,
+        query_maintenance, query_lab_results
+        Different anomalies → different tool calls
     end note
 
     note right of HITLGate
-        Human-in-the-Loop
-        between Agent 2 and 3
-        Prevents AI from acting on false alarms
+        Stage 3: Human-in-the-Loop
+        between Investigation and Hypothesis
+        Reviews AI investigation findings
         FDA 21 CFR Part 11 aligned
     end note
 
     note right of Hypothesize
-        Agent 3: HypothesisGenerator
-        LLM proposes root causes
+        Stage 4: Hypothesis Agent
+        Single LLM call with investigation findings
         OutputGuardrail redacts PII
     end note
 
     note right of Report
-        Agent 4: ReportGenerator
+        Stage 5: Report Generator
         LLM writes executive narrative
         OutputGuardrail checks recs
         ReportLab PDF + Jinja2 HTML
@@ -167,7 +179,7 @@ stateDiagram-v2
 
 ```mermaid
 graph LR
-    subgraph RuleBased ["Deterministic Rules"]
+    subgraph RuleBased ["Deterministic Rules (Stage 1)"]
         C1["1. Sensor Drift<br/>Rolling mean 1h vs 6h<br/>threshold: 1%/hr"]
         C2["2. Stuck Value<br/>Adaptive window,<br/>&lt;3 unique values"]
         C3["3. Impossible Readings<br/>Per-datatype limits"]
@@ -179,18 +191,18 @@ graph LR
         C9["9. Cross-Sensor Inconsistency<br/>Segmented correlation + trend"]
     end
 
-    C1 --> LLM["LLM prioritization<br/>(async, non-blocking)"]
-    C2 --> LLM
-    C3 --> LLM
-    C4 --> LLM
-    C5 --> LLM
-    C6 --> LLM
-    C7 --> LLM
-    C8 --> LLM
-    C9 --> LLM
+    C1 --> Inv["Investigation Agent<br/>Stage 2 (ReAct)<br/>queries external systems"]
+    C2 --> Inv
+    C3 --> Inv
+    C4 --> Inv
+    C5 --> Inv
+    C6 --> Inv
+    C7 --> Inv
+    C8 --> Inv
+    C9 --> Inv
 
     style C9 fill:#4338ca,stroke:#fff,color:#fff
-    style LLM fill:#16a34a,stroke:#fff,color:#fff
+    style Inv fill:#16a34a,stroke:#fff,color:#fff
 ```
 
 ## Cross-Sensor Corroboration (Check 9)
@@ -218,6 +230,22 @@ graph TD
     style VERDICT fill:#991b1b,stroke:#fff,color:#fff
     style Witnesses fill:#16a34a,stroke:#fff,color:#fff
 ```
+
+## Investigation Agent Tools (Stage 2)
+
+The Investigation Agent is a genuine ReAct agent — different anomaly types lead to different tool call sequences:
+
+| Tool | Simulated System | What It Returns | When Called |
+|------|-----------------|----------------|------------|
+| `query_historian` | PI Historian | Trend data, statistics, correlation changes | Drift, correlation breakdown, cross-sensor |
+| `query_events` | MES | Batch events, CIP cycles, operator actions | CIP issues, rate-of-change, impossible readings |
+| `query_maintenance` | CMMS | Calibration history, work orders, sensor replacement | Stuck values, drift, noise burst |
+| `query_lab_results` | LIMS | Lab sample results, batch quality, analytical data | Cross-sensor, silent lie, quality issues |
+
+The LLM decides which tools to call based on the anomaly type. For example:
+- **Stuck value** → `query_maintenance` (is it a broken transmitter?) → `query_historian` (how long stuck?)
+- **Cross-sensor inconsistency** → `query_historian` (trend analysis) → `query_lab_results` (confirm with lab data)
+- **CIP temperature low** → `query_events` (CIP cycle status) → `query_maintenance` (heater calibration?)
 
 ## Tag Simulator Anomaly Pool
 
@@ -271,34 +299,33 @@ graph TB
 
 ## Performance Architecture
 
+Stage 1 (Detection Engine) is deterministic — no LLM, runs in ~3-4s. Stage 2 (Investigation Agent) uses ReAct with tools at ~2-3s per anomaly. Total ~5-10s for detect+investigate.
+
 ```mermaid
 graph LR
-    subgraph Before ["Before: Sequential"]
-        A1_old["Agent 1: DataProfiler<br/>1 query/tag + LLM call<br/>~15-20s"]
-        A2_old["Agent 2: AnomalyDetector<br/>1 query/tag + rules + LLM<br/>~10-15s"]
-        Total_old["Total: ~30s"]
+    subgraph Pipeline ["5-Stage Pipeline Timing"]
+        S1["Stage 1: Detection Engine<br/>1 bulk query + 9 checks<br/>~3-4s (no LLM)"]
+        S2["Stage 2: Investigation Agent<br/>ReAct + 4 tools<br/>~2-3s per anomaly"]
+        S3["Stage 3: HITL Gate<br/>Human decision<br/>~variable"]
+        S4["Stage 4: Hypothesis Agent<br/>Single LLM call<br/>~2-3s per anomaly"]
+        S5["Stage 5: Report Generator<br/>LLM narrative + templates<br/>~3-5s"]
     end
 
-    subgraph After ["After: Merged + Async"]
-        A2_new["Agent 2: AnomalyDetector<br/>1 bulk query ALL data<br/>profiles computed inline<br/>rules + async LLM<br/>~5-8s"]
-        Total_new["Total: ~5-8s"]
-    end
+    S1 --> S2 --> S3 --> S4 --> S5
 
-    A1_old --> A2_old --> Total_old
-    A2_new --> Total_new
-
-    style Total_old fill:#dc2626,stroke:#fff,color:#fff
-    style Total_new fill:#16a34a,stroke:#fff,color:#fff
-    style A1_old fill:#991b1b,stroke:#fff,color:#fff
-    style A2_new fill:#166534,stroke:#fff,color:#fff
+    style S1 fill:#3b82f6,stroke:#fff,color:#fff
+    style S2 fill:#16a34a,stroke:#fff,color:#fff
+    style S3 fill:#f59e0b,stroke:#fff,color:#fff
+    style S4 fill:#16a34a,stroke:#fff,color:#fff
+    style S5 fill:#16a34a,stroke:#fff,color:#fff
 ```
 
 Key optimizations:
-- **Merged profiler**: Agent 2 computes mean/std/min/max/Q1/Q3/quality_codes inline from data_cache — no separate pass
+- **Detection Engine is code, not AI**: No LLM tokens spent on detection. Deterministic rules ensure 100% coverage and auditability.
 - **Single query**: `_load_all_readings()` loads ALL tag readings in one SQL query instead of per-tag loops
-- **Async LLM**: Anomaly detection returns immediately; LLM prioritization runs in background via `asyncio.ensure_future`
-- **Adaptive windows**: All checks compute window sizes from `86400/n` seconds per sample — works on any interval
+- **ReAct investigation**: Agent decides tool calls based on anomaly type — genuine agency, not a fixed lookup
 - **Hard cap + dedup**: Max 4 anomalies, dedup by tag_id (keep highest confidence), priority-sorted
+- **Token-efficient**: ~3-5K tokens/run total (investigation ~2-3K, hypothesis ~1-2K, report ~300)
 
 ## Database Schema
 
@@ -352,7 +379,7 @@ erDiagram
 
 ```mermaid
 graph LR
-    AgentOut["Agent 3/4<br/>LLM Output"] --> Guardrail
+    AgentOut["Stages 2/4/5<br/>LLM Output"] --> Guardrail
 
     subgraph Guardrail ["OutputGuardrail"]
         PII["PII Redaction<br/>SSN, email, phone, IP, names"]
@@ -389,7 +416,7 @@ graph TB
     end
 
     subgraph LLM ["LLM — Groq"]
-        Groq["Groq Llama 3.1 8B Instant<br/>(all agents, via langchain_openai)"]
+        Groq["Groq Llama 3.1 8B Instant<br/>(Investigation + Hypothesis + Report)"]
     end
 
     subgraph DB ["Database — Render PostgreSQL"]
@@ -403,7 +430,7 @@ graph TB
 
     React -->|API calls| FastAPI
     FastAPI --> LangGraph
-    LangGraph -->|"Agent 2-4"| Groq
+    LangGraph -->|"Stages 2, 4, 5"| Groq
     LangGraph --> SQLAlchemy
     SQLAlchemy --> PG
     FastAPI --> AsyncPG

@@ -6,21 +6,24 @@ import axios from 'axios'
 import API_BASE from '../api'
 
 const AGENT_ICONS = {
-  DetectionAgent: Database,
-  HypothesisGenerator: Activity,
+  DetectionEngine: Database,
+  InvestigationAgent: Search,
+  HypothesisAgent: Activity,
   ReportGenerator: FileText,
 }
 
 const AGENT_COLORS = {
-  DetectionAgent: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800',
-  HypothesisGenerator: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800',
+  DetectionEngine: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800',
+  InvestigationAgent: 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800',
+  HypothesisAgent: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800',
   ReportGenerator: 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800',
 }
 
 const AGENT_DESCRIPTIONS = {
-  DetectionAgent: { title: 'Agent 1: Detection Agent (ReAct)', what: 'Runs 9 baseline rule checks, then uses tools (get_tag_profile, check_correlation, check_cross_sensor, etc.) to investigate suspicious findings.', why: 'Genuine agent reasoning — decides what to investigate based on initial findings, catches patterns rules alone might miss.' },
-  HypothesisGenerator: { title: 'Agent 2: Hypothesis Agent (ReAct)', what: 'Uses tools (get_tag_details, get_process_context, get_similar_anomalies) to investigate before forming root cause hypotheses.', why: 'Investigates before hypothesizing — gathers evidence about the tag, its process context, and similar anomalies.' },
-  ReportGenerator: { title: 'Agent 3: Report Generator', what: 'Compiles findings into PDF, HTML, JSON. AI writes executive narrative.', why: 'Creates audit-ready docs with AI-generated insight for FDA 21 CFR Part 11.' },
+  DetectionEngine: { title: 'Stage 1: Detection Engine', what: '9 deterministic rule checks. No LLM.', why: 'Deterministic-first ensures 100% coverage and auditability.' },
+  InvestigationAgent: { title: 'Stage 2: Investigation Agent (ReAct)', what: 'Investigates anomalies with 4 tools: query_historian, query_events, query_maintenance, query_lab_results. Different anomalies lead to different tool calls.', why: 'Genuine agent reasoning — decides which external systems to query based on anomaly type.' },
+  HypothesisAgent: { title: 'Stage 4: Hypothesis Agent', what: 'Single LLM call with investigation findings and domain knowledge base.', why: 'Focused reasoning from collected evidence. Guardrail validates output.' },
+  ReportGenerator: { title: 'Stage 5: Report Generator', what: 'Compiles findings into PDF, HTML, JSON. AI writes executive narrative.', why: 'Audit-ready docs for FDA 21 CFR Part 11.' },
 }
 
 export default function TraceView() {
@@ -59,12 +62,16 @@ export default function TraceView() {
 
   const getAgentSummary = (trace) => {
     const out = trace.output || {}
-    if (trace.agent_name === 'DetectionAgent') {
+    if (trace.agent_name === 'DetectionEngine') {
       const count = out.tag_profiles ? Object.keys(out.tag_profiles).length : '?'
       const total = out.summary?.total_anomalies || out.anomalies?.length || 0
       return `Profiled ${count} tags, detected ${total} anomalies`
     }
-    if (trace.agent_name === 'HypothesisGenerator') {
+    if (trace.agent_name === 'InvestigationAgent') {
+      const tools = out.tools_used || out.tool_calls?.length || 0
+      return `Investigated with ${tools} tool calls`
+    }
+    if (trace.agent_name === 'HypothesisAgent') {
       const total = out.summary?.total_hypotheses || out.hypotheses?.length || 0
       return `Generated ${total} hypotheses`
     }
@@ -82,9 +89,9 @@ export default function TraceView() {
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Agent Trace</h1>
+          <h1 className="text-2xl font-bold text-foreground">Pipeline Trace</h1>
           <p className="text-muted-foreground text-sm mt-0.5">
-            {traceMode === 'minimal' ? 'Minimal view — toggle Full for I/O details' : 'Every agent decision logged — expand for I/O'}
+            {traceMode === 'minimal' ? 'Minimal view — toggle Full for I/O details' : 'Every stage decision logged — expand for I/O'}
           </p>
         </div>
         <div className="flex items-center gap-0.5 bg-secondary rounded-lg p-0.5">
@@ -109,7 +116,7 @@ export default function TraceView() {
 
       <div className="hint">
         <Search className="w-3.5 h-3.5" />
-        <span>Every agent logs inputs, outputs, and reasoning — required for FDA 21 CFR Part 11 auditability.</span>
+        <span>Every stage logs inputs, outputs, and reasoning — required for FDA 21 CFR Part 11 auditability.</span>
       </div>
 
       {traceMode === 'minimal' ? (
@@ -139,7 +146,7 @@ export default function TraceView() {
             })}
           </div>
           <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-            <p className="text-xs text-blue-800 dark:text-blue-300">Switch to <strong>Full Trace</strong> for complete agent I/O details.</p>
+            <p className="text-xs text-blue-800 dark:text-blue-300">Switch to <strong>Full Trace</strong> for complete stage I/O details.</p>
           </div>
         </div>
       ) : (
@@ -161,7 +168,7 @@ export default function TraceView() {
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="card p-3"><p className="text-xs text-muted-foreground">Runs</p><p className="text-xl font-bold text-foreground">{traces.length}</p></div>
-            <div className="card p-3"><p className="text-xs text-muted-foreground">Agents</p><p className="text-xl font-bold text-foreground">{uniqueAgents.length}</p></div>
+            <div className="card p-3"><p className="text-xs text-muted-foreground">Stages</p><p className="text-xl font-bold text-foreground">{uniqueAgents.length}</p></div>
             <div className="card p-3"><p className="text-xs text-muted-foreground">Latest</p><p className="text-xl font-bold text-foreground">{traces.length > 0 ? `#${traces.length}` : '-'}</p></div>
             <div className="card p-3"><p className="text-xs text-muted-foreground">LangSmith</p><p className="text-[10px] text-muted-foreground mt-1">Dev-only external trace viewer. Your users see this local trace log above. <a href="https://smith.langchain.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 underline">smith.langchain.com</a> (login required)</p></div>
           </div>
@@ -225,7 +232,7 @@ export default function TraceView() {
                           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="mt-3 ml-7 space-y-3">
                             {desc && (
                               <div className={`p-2.5 rounded-lg border ${colorClass}`}>
-                                <p className="text-[10px] font-semibold mb-0.5">Why this agent exists:</p>
+                                <p className="text-[10px] font-semibold mb-0.5">Why this stage exists:</p>
                                 <p className="text-xs opacity-80">{desc.why}</p>
                               </div>
                             )}

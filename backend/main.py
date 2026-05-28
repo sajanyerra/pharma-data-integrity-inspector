@@ -17,8 +17,9 @@ import uuid
 from database import init_db, get_db, async_session_maker
 from models import Tag, TagReading, Anomaly, AgentTrace
 from config import settings
-from agents.detection_agent import DetectionAgent
-from agents.hypothesis_generator import HypothesisGenerator
+from agents.detection_engine import DetectionEngine
+from agents.investigation_agent import InvestigationAgent
+from agents.hypothesis_agent import HypothesisAgent
 from agents.report_generator import ReportGenerator
 from agents.pipeline import PharmaPipeline
 from agents.guardrail import guardrail
@@ -657,7 +658,7 @@ async def generate_hypotheses():
                 from sqlalchemy import text
                 import json
                 
-                _analysis_jobs[job_id]["progress"] = "Running Agent 3: Hypothesis Generator..."
+                _analysis_jobs[job_id]["progress"] = "Running Stage 4: Hypothesis Agent..."
                 result = await session.execute(text("SELECT * FROM anomalies WHERE hitl_status = 'approved'"))
                 
                 anomalies = []
@@ -692,7 +693,7 @@ async def generate_hypotheses():
                     _analysis_jobs[job_id] = {"status": "completed", "progress": "Done", "result": {"status": "no_anomalies", "hypotheses": [], "message": "All anomalies were rejected. You can still generate a report."}, "error": None}
                     return
                 
-                generator = HypothesisGenerator()
+                generator = HypothesisAgent()
                 hypothesis_result = await generator.execute({
                     "anomalies": anomalies
                 })
@@ -727,7 +728,7 @@ async def generate_reports():
             async with async_session_maker() as session:
                 from sqlalchemy import text
                 import json
-                _analysis_jobs[job_id]["progress"] = "Running Agent 4: Report Generator..."
+                _analysis_jobs[job_id]["progress"] = "Running Stage 5: Report Generator..."
                 result = await session.execute(text("""
                     SELECT a.*, t.tag_name
                     FROM anomalies a
@@ -1026,31 +1027,44 @@ async def get_integrity_checks():
 async def get_pipeline_info():
     """Return pipeline architecture for the Stats page"""
     return {
-        "orchestration": "LangGraph StateGraph (v0.2.x) with conditional HITL edge",
-        "agents": [
+        "orchestration": "LangGraph StateGraph (v0.2.x) — 5-stage pipeline with conditional HITL edge",
+        "stages": [
             {
-                "id": 1, "name": "Detection Agent (ReAct)", "engine": "Baseline rules + LangGraph ReAct agent with 5 tools + ChatOpenAI (Groq)",
-                "flow": "9 baseline checks → ReAct agent investigates with tools (profiles, correlations, cross-sensor) → LLM analysis"
+                "id": 1, "name": "Detection Engine", "type": "deterministic",
+                "engine": "9 rule-based checks, no LLM",
+                "flow": "9 baseline checks → dedup → priority sort → return anomalies"
             },
             {
-                "id": 2, "name": "Hypothesis Agent (ReAct)", "engine": "LangGraph ReAct agent with 3 tools + ChatOpenAI (Groq) + OutputGuardrail",
-                "flow": "Approved anomalies → ReAct agent investigates (tag details, process context, similar anomalies) → root cause hypothesis"
+                "id": 2, "name": "Investigation Agent (ReAct)", "type": "ai_agent",
+                "engine": "LangGraph ReAct agent with 4 tools (query_historian, query_events, query_maintenance, query_lab_results) + ChatOpenAI (Groq)",
+                "flow": "Per anomaly: LLM decides which tools to call → investigation findings"
             },
             {
-                "id": 3, "name": "Report Generator", "engine": "Jinja2 + ChatOpenAI (Groq) + OutputGuardrail",
+                "id": 3, "name": "HITL Gate", "type": "human",
+                "engine": "Human reviews investigation findings",
+                "flow": "Investigation findings → human approves/rejects → approved anomalies"
+            },
+            {
+                "id": 4, "name": "Hypothesis Agent", "type": "ai",
+                "engine": "Single LLM call with investigation findings + ChatOpenAI (Groq) + OutputGuardrail",
+                "flow": "Approved anomalies + investigation findings → single LLM call → root cause hypotheses"
+            },
+            {
+                "id": 5, "name": "Report Generator", "type": "ai",
+                "engine": "Jinja2 + ChatOpenAI (Groq) + OutputGuardrail",
                 "flow": "All evidence → LLM writes executive narrative → PDF/HTML/JSON output"
             },
         ],
         "guardrail": {
             "name": "OutputGuardrail (Guardrails AI)",
             "checks": ["PII redaction (SSN, email, phone, IP, names)", "Pharma-sensitive (batch/lot numbers, patient refs)", "Credential redaction", "Dangerous recommendation blocking", "Confidence bounding (cap at 0.95)"],
-            "applied_to": ["Agent 2 (hypothesis output)", "Agent 3 (report data)"],
+            "applied_to": ["Investigation Agent (investigation output)", "Hypothesis Agent (hypothesis output)", "Report Generator (report data)"],
             "framework": "Guardrails AI with custom validators (PIIValidator, PharmaSensitiveValidator, CredentialValidator, DangerousRecommendationValidator)"
         },
         "hitl": {
             "name": "Human-in-the-Loop Gate",
-            "position": "Between Agent 1 and Agent 2",
-            "purpose": "Human must approve anomalies before AI generates root causes — prevents AI from acting on false alarms",
+            "position": "Between Investigation (Stage 2) and Hypothesis (Stage 4)",
+            "purpose": "Human reviews AI investigation findings before AI generates root causes — prevents AI from acting on false alarms",
             "statuses": ["pending → approved → hypothesis generated", "pending → rejected → no action"]
         },
         "silent_lie": {
@@ -1067,9 +1081,9 @@ async def get_tech_stack():
         {
             "category": "LLM & Orchestration",
             "items": [
-                {"name": "Groq Llama 3.1 8B Instant", "role": "Fast LLM for all 3 agents via langchain_openai", "icon": "Brain"},
+                {"name": "Groq Llama 3.1 8B Instant", "role": "Fast LLM for Investigation, Hypothesis, and Report agents via langchain_openai", "icon": "Brain"},
                 {"name": "LangChain", "role": "Prompt templates, output parsers, agent tool framework", "icon": "Link2"},
-                {"name": "LangGraph", "role": "StateGraph orchestration — conditional HITL edge between Agent 1 and 2", "icon": "GitBranch"},
+                {"name": "LangGraph", "role": "5-stage StateGraph with HITL gate between Investigation and Hypothesis", "icon": "GitBranch"},
                 {"name": "LangSmith", "role": "Trace logging, evaluation, and debug (EU endpoint)", "icon": "Activity"},
             ]
         },

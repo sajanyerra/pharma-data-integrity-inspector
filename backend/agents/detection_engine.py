@@ -1,22 +1,16 @@
 """
-Agent 1: Detection Agent (ReAct)
-Runs 9 deterministic baseline checks first, then uses a ReAct agent with tools
-to investigate suspicious findings. The agent decides what to dig deeper into.
+Stage 1: Detection Engine (Deterministic)
+Runs 9 baseline checks on sensor data. No LLM. Pure rule-based code.
 """
 
-import json
 import numpy as np
 from scipy import stats
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
-from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
 from .base import BaseAgent
-from .detection_tools import set_detection_context
-from config import settings
 
 
-class DetectionAgent(BaseAgent):
+class DetectionEngine(BaseAgent):
 
     CORRELATED_PAIRS = [
         ("FI-101", "LI-101"), ("TI-201", "TI-202"), ("PI-501", "PI-502"),
@@ -36,11 +30,7 @@ class DetectionAgent(BaseAgent):
     ROC_THRESHOLDS = {"Temperature": 50, "Pressure": 20, "Flow": 200, "Level": 30}
 
     def __init__(self):
-        super().__init__("DetectionAgent")
-        self.llm = ChatOpenAI(
-            model=settings.LLM_MODEL, temperature=0.1,
-            api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL,
-        )
+        super().__init__("DetectionEngine")
         self.cross_sensor_groups = self._load_cross_sensor_groups()
 
     def _load_cross_sensor_groups(self) -> Dict:
@@ -48,19 +38,9 @@ class DetectionAgent(BaseAgent):
             from tag_simulator import TagSimulator
             return TagSimulator(seed=42).CROSS_SENSOR_WITNESSES
         except Exception:
-            return {
-                'TI-101': {
-                    'witnesses': ['PI-101', 'FI-201', 'LI-101'],
-                    'relationships': {
-                        'PI-101': {'coeff': 0.05, 'direction': 'same', 'desc': 'Higher reactor temp -> higher vapor pressure'},
-                        'FI-201': {'coeff': -0.8, 'direction': 'opposite', 'desc': 'Higher reactor temp -> more cooling flow'},
-                        'LI-101': {'coeff': 0.15, 'direction': 'same', 'desc': 'Temperature affects reaction rate'},
-                    },
-                },
-            }
+            return {}
 
     async def _load_all_readings(self, hours: int) -> Dict[str, Dict]:
-        """Load from DB if available, else generate simulated data on the fly."""
         cutoff_time = datetime.utcnow() - timedelta(hours=hours)
         all_rows = await self.db_conn.fetch(
             "SELECT tag_id, value, quality_code, timestamp FROM tag_readings WHERE timestamp >= $1 ORDER BY tag_id, timestamp",
@@ -81,12 +61,11 @@ class DetectionAgent(BaseAgent):
             if any(len(v["values"]) > 30 for v in cache.values()):
                 return cache
 
-        # Fallback: generate simulated data with anomalies (no DB needed)
         from tag_simulator import TagSimulator
         sim = TagSimulator(seed=42, start_time=datetime.utcnow() - timedelta(hours=hours))
         start = datetime.utcnow() - timedelta(hours=hours)
         cache = {}
-        interval = 120  # 2-minute intervals = 720 readings/tag for 24h
+        interval = 120
         total_points = hours * 3600 // interval
         for i in range(total_points):
             ts = start + timedelta(seconds=i * interval)
@@ -103,7 +82,6 @@ class DetectionAgent(BaseAgent):
         return cache
 
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Run baseline checks, then ReAct agent to investigate."""
         await self.connect_db()
         try:
             hours = input_data.get("hours", 24)
@@ -111,22 +89,18 @@ class DetectionAgent(BaseAgent):
             tags_result = await self.db_conn.fetch("SELECT * FROM tags")
             tag_metadata = {row["tag_id"]: dict(row) for row in tags_result}
 
-            # If no tag metadata in DB, use simulator config
             if not tag_metadata:
                 from tag_simulator import TagSimulator
                 sim = TagSimulator(seed=42)
-                # Build metadata from TAG_CONFIGS + get_tag_metadata
                 meta_list = sim.get_tag_metadata()
                 meta_map = {m["tag_id"]: m for m in meta_list}
                 for tag_id, tc in sim.TAG_CONFIGS.items():
                     m = meta_map.get(tag_id, {})
                     tag_metadata[tag_id] = {
-                        "tag_id": tag_id,
-                        "tag_name": m.get("tag_name", tag_id),
+                        "tag_id": tag_id, "tag_name": m.get("tag_name", tag_id),
                         "unit_type": m.get("unit_type", "Unknown"),
                         "data_type": tc.get("data_type", "Unknown"),
-                        "normal_min": m.get("normal_min", 0),
-                        "normal_max": m.get("normal_max", 100),
+                        "normal_min": m.get("normal_min", 0), "normal_max": m.get("normal_max", 100),
                         "description": m.get("description", ""),
                     }
 
@@ -149,7 +123,6 @@ class DetectionAgent(BaseAgent):
                     "data_type": meta.get("data_type", "Unknown"),
                 }
 
-            # ── Phase 1: Deterministic baseline checks ──
             anomalies: List[Dict] = []
             for tag_id, profile in tag_profiles.items():
                 data_type = profile.get("data_type", "Unknown")
@@ -177,7 +150,6 @@ class DetectionAgent(BaseAgent):
             anomalies.extend(await self._check_pharma(data_cache, tag_metadata))
             anomalies.extend(self._check_cross_sensor(tag_profiles, data_cache))
 
-            # Dedup: keep highest-confidence per tag, then cap at 4
             best = {}
             for a in anomalies:
                 tid = a["tag_id"]
@@ -188,64 +160,14 @@ class DetectionAgent(BaseAgent):
                      "impossible_readings": 6, "cip_temperature_low": 7, "fda_audit_trail_concern": 8}
             final = sorted(best.values(), key=lambda a: (prio.get(a.get("anomaly_type", ""), 9), -float(a.get("confidence", 0))))[:4]
 
-            # ── Phase 2: ReAct agent investigation ──
-            from .detection_tools import get_tag_profile, check_correlation, check_cross_sensor, get_anomaly_summary, get_recent_readings
-            tools = [get_tag_profile, check_correlation, check_cross_sensor, get_anomaly_summary, get_recent_readings]
-
-            set_detection_context(data_cache, tag_profiles, tag_metadata, final, self.cross_sensor_groups)
-
-            agent_reasoning = ""
-            try:
-                react_agent = create_react_agent(
-                    model=self.llm,
-                    tools=tools,
-                    prompt="You are a pharma process engineer investigating sensor data integrity anomalies. "
-                           "You have access to tools that let you examine individual sensors, check correlations, "
-                           "and run cross-sensor corroboration checks. "
-                           "Start by reviewing the baseline anomaly summary, then investigate any suspicious tags by "
-                           "checking their profiles, correlations, and witness sensors. "
-                           "Provide a concise 2-3 sentence assessment of: (1) what the pattern suggests, "
-                           "(2) which anomaly is most urgent, (3) any systemic issue.",
-                )
-
-                anomaly_lines = [f"- {a['tag_id']}: {a['anomaly_type'].replace('_', ' ')} ({a.get('confidence', 0):.0%} confidence)"
-                                 for a in final[:4]]
-                anomaly_text = "\n".join(anomaly_lines) if final else "No anomalies found."
-
-                result = await react_agent.ainvoke(
-                    {"messages": [{"role": "user", "content": f"I just ran 9 integrity checks on 20 pharma sensors. Findings:\n{anomaly_text}\n\nPlease investigate further. Use the tools to check profiles, correlations, and cross-sensor relationships for any suspicious tags."}]},
-                )
-
-                for msg in result.get("messages", []):
-                    if hasattr(msg, 'content') and msg.content and hasattr(msg, 'type'):
-                        if msg.type == 'ai' and msg.content and not hasattr(msg, 'tool_calls'):
-                            pass
-
-                steps = []
-                for msg in result.get("messages", []):
-                    if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                        for tc in msg.tool_calls:
-                            tool_name = tc.get('name', tc.get('function', {}).get('name', 'unknown'))
-                            tool_args = tc.get('args', tc.get('function', {}).get('arguments', {}))
-                            steps.append(f"Called {tool_name}({json.dumps(tool_args) if isinstance(tool_args, dict) else tool_args})")
-                    elif hasattr(msg, 'type') and msg.type == 'tool':
-                        content = msg.content[:200] if msg.content else ""
-                        steps.append(f"Result: {content}")
-                    elif hasattr(msg, 'content') and msg.content and not hasattr(msg, 'tool_calls'):
-                        if msg.content.strip() and not any(c in msg.content for c in ['Called', 'Result:']):
-                            steps.append(f"Agent: {msg.content.strip()}")
-
-                agent_reasoning = "\n".join(steps) if steps else ""
-
-            except Exception as e:
-                print(f"[DetectionAgent] ReAct agent failed, using fallback: {e}")
-                if final:
-                    agent_reasoning = f"{len(final)} anomalies detected by baseline checks. Detailed investigation unavailable."
-
             result = {
                 "anomalies": final,
                 "tag_profiles": tag_profiles,
-                "agent_reasoning": agent_reasoning,
+                "data_cache": {k: {"values": v["values"].tolist() if hasattr(v["values"], 'tolist') else list(v["values"]),
+                                    "timestamps": [str(t) for t in v.get("timestamps", [])],
+                                    "quality_codes": v.get("quality_codes", [])}
+                               for k, v in data_cache.items() if len(v["values"]) > 10},
+                "agent_reasoning": "",
                 "summary": {"total_anomalies": len(final), "by_type": self._count_by_type(final),
                              "timestamp": datetime.utcnow().isoformat()},
             }
@@ -256,8 +178,6 @@ class DetectionAgent(BaseAgent):
 
         return result
 
-    # ── baseline checks (same as before) ──────────────────────────────────
-
     def _check_sensor_drift(self, tag_id: str, values: np.ndarray, profile: Dict) -> Dict | None:
         n = len(values)
         if n < 30: return None
@@ -267,10 +187,7 @@ class DetectionAgent(BaseAgent):
         if recent + prev > n:
             recent, prev = max(10, n // 4), max(30, n // 2)
         recent_vals = values[-recent:]
-        if recent + prev <= n:
-            previous_vals = values[-(recent + prev):-recent]
-        else:
-            previous_vals = values[:prev]
+        previous_vals = values[-(recent + prev):-recent] if recent + prev <= n else values[:prev]
         r_mean = float(np.mean(recent_vals))
         p_mean = float(np.mean(previous_vals))
         dev = abs(r_mean - p_mean) / (abs(p_mean) + 0.001) * 100
@@ -353,11 +270,11 @@ class DetectionAgent(BaseAgent):
             shift = abs(cs - cf)
             if shift > 0.8 and n > 50:
                 anomalies.append({"tag_id": tag_a, "anomaly_type": "correlation_breakdown",
-                                   "confidence": min(0.9, float(shift)),
-                                   "evidence": {"pair": f"{tag_a} vs {tag_b}", "partner_tag": tag_b,
-                                                  "shift": round(float(shift), 3), "n_readings": n},
-                                   "timestamp": datetime.utcnow().isoformat(),
-                                   "severity": "high" if shift > 0.8 else "medium"})
+                                    "confidence": min(0.9, float(shift)),
+                                    "evidence": {"pair": f"{tag_a} vs {tag_b}", "partner_tag": tag_b,
+                                                   "shift": round(float(shift), 3), "n_readings": n},
+                                    "timestamp": datetime.utcnow().isoformat(),
+                                    "severity": "high" if shift > 0.8 else "medium"})
         return anomalies
 
     async def _check_pharma(self, data_cache: Dict, tag_metadata: Dict) -> List[Dict]:
@@ -368,10 +285,10 @@ class DetectionAgent(BaseAgent):
             lows = int(np.sum(cip["TI-601"] < 70))
             if lows > 30:
                 anomalies.append({"tag_id": "TI-601", "anomaly_type": "cip_temperature_low",
-                                    "confidence": min(0.9, lows / 100),
-                                    "evidence": {"low_temp_readings": lows, "min_temp": round(float(np.min(cip["TI-601"])), 2), "threshold": 70},
-                                    "timestamp": datetime.utcnow().isoformat(), "severity": "high",
-                                    "pharma_impact": "Incomplete cleaning - contamination risk"})
+                                     "confidence": min(0.9, lows / 100),
+                                     "evidence": {"low_temp_readings": lows, "min_temp": round(float(np.min(cip["TI-601"])), 2), "threshold": 70},
+                                     "timestamp": datetime.utcnow().isoformat(), "severity": "high",
+                                     "pharma_impact": "Incomplete cleaning - contamination risk"})
         qa = await self.db_conn.fetch(
             "SELECT tag_id, quality_code, COUNT(*) as cnt FROM tag_readings "
             "WHERE timestamp >= NOW() - INTERVAL '24 hours' GROUP BY tag_id, quality_code")
@@ -384,10 +301,10 @@ class DetectionAgent(BaseAgent):
         for tid, q in tq.items():
             if q["total"] > 100 and q["bad"] / q["total"] > 0.5:
                 anomalies.append({"tag_id": tid, "anomaly_type": "fda_audit_trail_concern", "confidence": 0.7,
-                                    "evidence": {"non_good_ratio": round(q["bad"] / q["total"], 3),
-                                                  "total_readings": q["total"], "non_good_readings": q["bad"]},
-                                    "timestamp": datetime.utcnow().isoformat(), "severity": "high",
-                                    "pharma_impact": "21 CFR Part 11 compliance concern"})
+                                     "evidence": {"non_good_ratio": round(q["bad"] / q["total"], 3),
+                                                   "total_readings": q["total"], "non_good_readings": q["bad"]},
+                                     "timestamp": datetime.utcnow().isoformat(), "severity": "high",
+                                     "pharma_impact": "21 CFR Part 11 compliance concern"})
         return anomalies
 
     def _check_cross_sensor(self, tag_profiles: Dict, data_cache: Dict) -> List[Dict]:
@@ -449,13 +366,13 @@ class DetectionAgent(BaseAgent):
                 if len(contradictions) >= 2: conf = min(0.95, conf + 0.05)
                 wsum = ", ".join(c["witness"] for c in contradictions)
                 anomalies.append({"tag_id": suspect_tag, "anomaly_type": "cross_sensor_inconsistency",
-                                   "confidence": round(conf, 2),
-                                   "evidence": {"witness_count": len(contradictions), "witnesses": wsum,
-                                                  "contradictions": contradictions,
-                                                  "suspect_mean": round(s_mean, 3), "suspect_std": round(s_std, 3)},
-                                   "timestamp": datetime.utcnow().isoformat(), "severity": "high",
-                                   "pharma_impact": f"Sensor {suspect_tag} contradicts {wsum} — reading may be plausible but wrong.",
-                                   "is_silent_lie": True})
+                                    "confidence": round(conf, 2),
+                                    "evidence": {"witness_count": len(contradictions), "witnesses": wsum,
+                                                   "contradictions": contradictions,
+                                                   "suspect_mean": round(s_mean, 3), "suspect_std": round(s_std, 3)},
+                                    "timestamp": datetime.utcnow().isoformat(), "severity": "high",
+                                    "pharma_impact": f"Sensor {suspect_tag} contradicts {wsum} — reading may be plausible but wrong.",
+                                    "is_silent_lie": True})
         return anomalies
 
     def _count_by_type(self, anomalies: List[Dict]) -> Dict[str, int]:

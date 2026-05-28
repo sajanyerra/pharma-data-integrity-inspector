@@ -162,8 +162,8 @@ export default function AnomalyDetection() {
         <div className="card p-4">
           <div className="flex items-center gap-2 mb-2">
             <Brain className="w-4 h-4 text-violet-500" />
-            <span className="text-sm font-semibold text-foreground">Agent Investigation</span>
-            <span className="text-[10px] text-muted-foreground">AI agent used tools to investigate findings</span>
+            <span className="text-sm font-semibold text-foreground">Investigation Agent Reasoning</span>
+            <span className="text-[10px] text-muted-foreground">Investigation Agent used tools (Historian, MES, CMMS, LIMS) to investigate</span>
           </div>
           <div className="bg-secondary rounded-lg p-3 max-h-48 overflow-y-auto">
             <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono">{agentReasoning}</pre>

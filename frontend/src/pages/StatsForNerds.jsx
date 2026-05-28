@@ -374,11 +374,11 @@ export default function StatsForNerds() {
                   <p className="text-xs text-foreground">{pipeline.orchestration}</p>
                 </div>
                 <div className="space-y-2">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase">3 Agents</p>
-                  {pipeline.agents.map(a => (
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase">5 Stages</p>
+                  {(pipeline.stages || pipeline.agents || []).map(a => (
                     <div key={a.id} className="p-3 rounded-lg border border-border">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-bold text-foreground">Agent {a.id}: {a.name}</span>
+                        <span className="text-xs font-bold text-foreground">Stage {a.id}: {a.name}</span>
                       </div>
                       <p className="text-[10px] text-muted-foreground mb-1"><strong className="text-foreground">Engine:</strong> {a.engine}</p>
                       <p className="text-[10px] text-muted-foreground"><strong className="text-foreground">Flow:</strong> {a.flow}</p>
@@ -428,7 +428,7 @@ export default function StatsForNerds() {
               <div className="px-5 pb-4 space-y-3">
                 {[
                    { q: "What is Cross-Sensor Corroboration?", a: "Check 9. It catches sensors that read within normal range, pass quality codes, and pass every threshold check — but are wrong. A temp sensor reads 172°C but its correlated pressure and flow sensors say 175°C. No historian catches this." },
-                   { q: "Why call them 'agents' and not 'modules'?", a: "The Detection and Hypothesis agents are genuine ReAct agents — they have tools and decide which ones to call based on what they find. The Detection agent can call get_tag_profile, check_correlation, check_cross_sensor, etc. The Hypothesis agent can call get_tag_details, get_process_context, and get_similar_anomalies. They reason about what to investigate next, not just apply templates." },
+                   { q: "Why call some components 'agents' and others not?", a: "Only 2 components are genuine AI agents. The Investigation Agent is a ReAct agent with 4 tools (query_historian, query_events, query_maintenance, query_lab_results) — it decides which external systems to query based on anomaly type. The Hypothesis Agent is a single LLM call. The Detection Engine is deterministic code (no LLM, no tools) — it runs 9 rule checks with 100% coverage and full auditability. Calling the Detection Engine an 'agent' would be misleading since it has no autonomy or reasoning loop." },
                   { q: "How is this different from Seeq?", a: "Seeq assumes your data is trustworthy and analyzes the process. We question whether the data is trustworthy in the first place. Seeq tells you 'reactor temp is trending up.' We tell you 'the temp sensor is lying — don't trust that Seeq alert.'" },
                   { q: "How is this different from AVEVA PI quality codes?", a: "PI quality codes are per-sensor, per-reading. They flag broken communication, out-of-range, etc. They cannot detect a sensor that's wrong-but-plausible (within range, Good quality code, but contradicted by other sensors). That's what Cross-Sensor Corroboration catches." },
                   { q: "What's cross-sensor corroboration?", a: "A sensor reading that is within normal range, has Good quality code, passes all threshold checks — but is wrong. The sensor is miscalibrated by a few degrees. No individual check catches it. Only cross-referencing correlated sensors catches it." },

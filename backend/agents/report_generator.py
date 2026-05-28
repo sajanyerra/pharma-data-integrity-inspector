@@ -1,5 +1,5 @@
 """
-Agent 4: Report Generator
+Stage 5: Report Generator
 Creates PDF, HTML, and JSON reports.
 Uses templates for formatting, then LLM to write the executive narrative.
 """

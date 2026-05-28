@@ -1,7 +1,7 @@
 """
-Agent 2: Hypothesis Generator (ReAct)
-Uses LLM with tools to investigate anomalies before forming root cause hypotheses.
-Applies OutputGuardrail before storing results.
+Stage 4: Hypothesis Agent (Single LLM Call)
+Receives investigation findings from Stage 2 and makes a single LLM call per anomaly
+to form root cause hypotheses. No tools — genuine LLM reasoning from assembled evidence.
 """
 
 import json
@@ -9,15 +9,13 @@ from typing import Dict, Any, List
 from datetime import datetime
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import JsonOutputParser
-from langgraph.prebuilt import create_react_agent
+from langchain_core.prompts import PromptTemplate
 from .base import BaseAgent
 from .guardrail import guardrail
-from .hypothesis_tools import set_hypothesis_context
 from config import settings
 
 
-class HypothesisGenerator(BaseAgent):
-    """Generates root cause hypotheses using ReAct agent with investigation tools"""
+class HypothesisAgent(BaseAgent):
 
     ROOT_CAUSE_KB = {
         "sensor_drift": [
@@ -28,15 +26,15 @@ class HypothesisGenerator(BaseAgent):
         ],
         "stuck_value": [
             "Sensor communication failure (cable/wiring issue)",
-            "Frozen transmitter (electronics failure)",
-            "Network connectivity loss to historian",
-            "Sensor power supply failure",
+            "Transmitter lockup requiring power cycle",
+            "Analog input channel failure in DCS/PLC",
+            "Network communication timeout",
         ],
         "impossible_readings": [
-            "Sensor wiring fault (short/open circuit)",
-            "Transmitter configuration error",
-            "Electrical noise interference",
-            "ADC (analog-to-digital converter) failure",
+            "Sensor wiring fault (open/short circuit)",
+            "Transmitter misconfiguration (wrong range/scale)",
+            "Analog input card failure",
+            "Sensor element catastrophic failure",
         ],
         "rate_of_change_violation": [
             "Process upset (valve malfunction, pump trip)",
@@ -89,7 +87,7 @@ class HypothesisGenerator(BaseAgent):
     }
 
     def __init__(self):
-        super().__init__("HypothesisGenerator")
+        super().__init__("HypothesisAgent")
         self.llm = ChatOpenAI(
             model=settings.LLM_MODEL, temperature=0.3,
             api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL,
@@ -97,13 +95,12 @@ class HypothesisGenerator(BaseAgent):
 
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         await self.connect_db()
-
         try:
             anomalies = input_data.get("anomalies", [])
+            investigation_findings = input_data.get("investigation_findings", [])
             if not anomalies:
                 return {"hypotheses": [], "summary": {"total": 0}, "agent_reasoning": ""}
 
-            # Load tag metadata for all anomalies
             tag_ids = list(set(a.get("tag_id", "") for a in anomalies if a.get("tag_id")))
             tag_metadata = {}
             async with self.db_conn.transaction():
@@ -113,14 +110,9 @@ class HypothesisGenerator(BaseAgent):
                     if row:
                         tag_metadata[row["tag_id"]] = dict(row)
 
-            # Set context for tools
-            from .hypothesis_tools import get_tag_details, get_process_context, get_similar_anomalies
-            set_hypothesis_context(anomalies, tag_metadata)
+            inv_map = {f["tag_id"]: f for f in investigation_findings} if investigation_findings else {}
 
-            # Run ReAct agent to investigate, then generate hypotheses
             hypotheses = []
-            agent_reasoning_steps = []
-
             for anomaly in anomalies:
                 try:
                     tag_id = anomaly.get("tag_id", "Unknown")
@@ -130,63 +122,19 @@ class HypothesisGenerator(BaseAgent):
                         try: evidence = json.loads(evidence)
                         except: evidence = {}
 
-                    # ── Phase 1: ReAct agent investigates ──
-                    reasoning = ""
-                    try:
-                        react_agent = create_react_agent(
-                            model=self.llm,
-                            tools=[get_tag_details, get_process_context, get_similar_anomalies],
-                            prompt="You are a pharma process engineer investigating sensor anomalies. "
-                                   "Use the available tools to gather information about the affected sensor, "
-                                   "its process context, and whether similar anomalies exist. "
-                                   "Then provide your root cause analysis. "
-                                   "Keep your response concise — 2-3 sentences about the likely root cause "
-                                   "and what additional investigation is needed.",
-                        )
-
-                        result = await react_agent.ainvoke(
-                            {"messages": [{"role": "user",
-                              "content": f"Investigate this anomaly: {tag_id} has {anomaly_type.replace('_', ' ')} "
-                                         f"({anomaly.get('confidence', 0):.0%} confidence). "
-                                         f"Evidence: {json.dumps(evidence)[:300]}. "
-                                         f"Please use the tools to check tag details, process context, and similar anomalies."}]}
-                        )
-
-                        steps = []
-                        for msg in result.get("messages", []):
-                            if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                                for tc in msg.tool_calls:
-                                    tool_name = tc.get('name', 'unknown')
-                                    tool_args = tc.get('args', {})
-                                    steps.append(f"Called {tool_name}({json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args)})")
-                            elif hasattr(msg, 'type') and msg.type == 'tool':
-                                content = msg.content[:200] if msg.content else ""
-                                steps.append(f"Result: {content}")
-                            elif hasattr(msg, 'content') and msg.content and not hasattr(msg, 'tool_calls'):
-                                if msg.content.strip():
-                                    steps.append(f"Agent: {msg.content.strip()[:300]}")
-
-                        reasoning = "\n".join(steps) if steps else ""
-                        agent_reasoning_steps.append(f"--- {tag_id}: {anomaly_type} ---\n{reasoning}")
-
-                    except Exception as e:
-                        print(f"[HypothesisGenerator] ReAct agent failed for {tag_id}: {e}")
-                        reasoning = ""
-
-                    # ── Phase 2: Generate hypothesis from investigation ──
                     tag_info = tag_metadata.get(tag_id, {})
                     known_causes = self.ROOT_CAUSE_KB.get(anomaly_type, ["Unknown anomaly type"])
                     recommended_action = self.RECOMMENDED_ACTIONS.get(anomaly_type, "Investigate anomaly")
+                    inv = inv_map.get(tag_id, {})
+                    inv_summary = inv.get("investigation_summary", "No investigation data available.")
 
-                    try:
-                        from langchain_core.prompts import PromptTemplate
-                        prompt = PromptTemplate(
-                            template="""You are a pharma process engineer. Based on the investigation results, provide a root cause hypothesis.
+                    prompt = PromptTemplate(
+                        template="""You are a pharma process engineer. Based on the investigation results, provide a root cause hypothesis.
 
 Tag: {tag_id} ({tag_name}, {unit_type})
 Anomaly: {anomaly_type}
 Evidence: {evidence}
-Investigation: {reasoning}
+Investigation findings: {investigation}
 Known causes for this type: {known_causes}
 
 Provide your analysis in this exact JSON format:
@@ -197,10 +145,11 @@ Provide your analysis in this exact JSON format:
   "alternative_causes": ["Alternative cause 1", "Alternative cause 2"],
   "pharma_impact": "Impact on product quality/compliance"
 }}""",
-                            input_variables=["tag_id", "tag_name", "unit_type", "anomaly_type",
-                                            "evidence", "reasoning", "known_causes"]
-                        )
+                        input_variables=["tag_id", "tag_name", "unit_type", "anomaly_type",
+                                        "evidence", "investigation", "known_causes"]
+                    )
 
+                    try:
                         chain = prompt | self.llm | JsonOutputParser()
                         response = await chain.ainvoke({
                             "tag_id": tag_id,
@@ -208,10 +157,9 @@ Provide your analysis in this exact JSON format:
                             "unit_type": tag_info.get("unit_type", "Unknown"),
                             "anomaly_type": anomaly_type,
                             "evidence": str(evidence)[:300],
-                            "reasoning": reasoning[:500] if reasoning else "No investigation data available.",
+                            "investigation": inv_summary[:500],
                             "known_causes": "\n".join(f"- {c}" for c in known_causes),
                         })
-
                         hypothesis = {
                             "root_cause": response.get("root_cause", known_causes[0]),
                             "confidence": float(response.get("confidence", 0.5)),
@@ -228,7 +176,6 @@ Provide your analysis in this exact JSON format:
                             "pharma_impact": "Review required for compliance assessment",
                         }
 
-                    # Apply guardrail
                     hypothesis = guardrail.validate_hypothesis(hypothesis)
 
                     hypotheses.append({
@@ -240,10 +187,10 @@ Provide your analysis in this exact JSON format:
                         "recommended_action": hypothesis["recommended_action"],
                         "alternative_causes": hypothesis.get("alternative_causes", []),
                         "pharma_impact": hypothesis.get("pharma_impact", ""),
+                        "investigation_summary": inv_summary,
                         "timestamp": datetime.utcnow().isoformat()
                     })
 
-                    # Update database
                     await self.db_conn.execute(
                         "UPDATE anomalies SET hypothesis = $1, recommended_action = $2 WHERE id = $3",
                         hypothesis["root_cause"], hypothesis["recommended_action"], anomaly.get("id")
@@ -255,7 +202,7 @@ Provide your analysis in this exact JSON format:
 
             result = {
                 "hypotheses": hypotheses,
-                "agent_reasoning": "\n\n".join(agent_reasoning_steps),
+                "agent_reasoning": f"Generated {len(hypotheses)} root cause hypotheses from investigation findings.",
                 "summary": {
                     "total_hypotheses": len(hypotheses),
                     "high_confidence": sum(1 for h in hypotheses if h["confidence"] > 0.7),

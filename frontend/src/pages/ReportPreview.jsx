@@ -67,7 +67,7 @@ export default function ReportPreview() {
 
       <div className="hint">
         <Bot className="w-3.5 h-3.5" />
-        <span>Agent 3 packages findings into 3 formats for FDA 21 CFR Part 11 compliance.</span>
+        <span>Stage 5 packages findings into 3 formats for FDA 21 CFR Part 11 compliance.</span>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -101,7 +101,7 @@ function App() {
             </div>
             <div>
               <h1 className="text-sm font-bold text-foreground leading-tight">Pharma Data Integrity Inspector</h1>
-              <p className="text-[10px] text-muted-foreground">3-Agent AI Pipeline</p>
+              <p className="text-[10px] text-muted-foreground">5-Stage AI Pipeline</p>
             </div>
           </Link>
 
