@@ -1035,9 +1035,9 @@ async def get_pipeline_info():
                 "flow": "9 baseline checks → dedup → priority sort → return anomalies"
             },
             {
-                "id": 2, "name": "Investigation Agent (ReAct)", "type": "ai_agent",
-                "engine": "LangGraph ReAct agent with 4 tools (query_historian, query_events, query_maintenance, query_lab_results) + ChatOpenAI (Groq)",
-                "flow": "Per anomaly: LLM decides which tools to call → investigation findings"
+                "id": 2, "name": "Investigation Agent", "type": "ai_agent",
+                "engine": "4 tools (query_historian, query_events, query_maintenance, query_lab_results) + ChatOpenAI (Groq). Tool selection per anomaly type.",
+                "flow": "Per anomaly: type-mapped tool calls → single LLM summary → investigation findings"
             },
             {
                 "id": 3, "name": "HITL Gate", "type": "human",

@@ -1,36 +1,87 @@
 """
-Stage 2: Investigation Agent (ReAct)
+Stage 2: Investigation Agent
 Receives anomalies from the Detection Engine, investigates each one using 4 genuine tools
-that query simulated external systems (historian, MES, CMMS, LIMS).
-The LLM decides which tools to call based on the anomaly type — different anomalies
-lead to different investigation paths. That's genuine agency.
+that query simulated external systems (Historian, MES, CMMS, LIMS).
+Tools are selected per anomaly type (ANOMALY_GUIDANCE specifies which are relevant),
+executed directly, then a single LLM call summarizes the findings.
 """
 
 import json
 from typing import Dict, Any, List
 from datetime import datetime
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
+from langchain_core.prompts import ChatPromptTemplate
 from .base import BaseAgent
-from .investigation_tools import set_investigation_context
-from .investigation_tools import query_historian, query_events, query_maintenance, query_lab_results
+from .investigation_tools import (
+    set_investigation_context,
+    query_historian, query_events, query_maintenance, query_lab_results,
+    _historian_api, _mes_api, _cmms_api, _lims_api,
+)
 from .guardrail import guardrail
 from config import settings
 
 
 class InvestigationAgent(BaseAgent):
-    """Investigates anomalies using ReAct agent with 4 external-system tools"""
+    """Investigates anomalies using curated tool calls + LLM summary"""
 
-    ANOMALY_GUIDANCE = {
-        "sensor_drift": "Drift suggests gradual calibration degradation. Check the historian for a long-term trend (48h), then check if there was a grade change or batch start, then check maintenance history for recent calibration.",
-        "stuck_value": "Stuck value usually means a communication failure. Check the historian for the stuck window (6h), then check DCS diagnostics via maintenance history, then check if there was recent maintenance on this loop.",
-        "noise_burst": "Noise bursts often come from electrical interference. Check the historian at high resolution (1h, 1min), then check if there was an equipment startup nearby. Maintenance is unlikely to help here.",
-        "rate_of_change_violation": "Rapid changes suggest a process upset or equipment issue. Check the historian (1-6h), then check for process upsets or equipment startups. Maintenance might be relevant if a valve or controller failed.",
-        "correlation_breakdown": "A breakdown in correlation suggests one sensor changed behavior. Check the historian for both tags (24h), then check for grade changes that might explain a process shift.",
-        "cross_sensor_inconsistency": "This is a Silent Lie — the sensor reads plausibly but contradicts its witnesses. Check the historian for the suspect tag AND its witnesses, then check lab results to see if product quality was affected.",
-        "cip_temperature_low": "CIP temperature below sterilization threshold. Check the historian for the CIP loop, then check maintenance on the steam heater or temperature controller.",
-        "fda_audit_trail_concern": "Audit trail concerns are about compliance, not process. Check maintenance for any system changes, then check lab results for any concurrent product impact.",
-        "impossible_readings": "Impossible readings mean the sensor is clearly broken. Check the historian to see when it started, then check maintenance for recent repair/recalibration.",
+    ANOMALY_TOOL_MAP = {
+        "sensor_drift": [
+            {"tool": "query_historian", "args": {"hours": 48, "resolution_min": 15}},
+            {"tool": "query_events", "args": {"event_type": "grade_change"}},
+            {"tool": "query_maintenance", "args": {}},
+        ],
+        "stuck_value": [
+            {"tool": "query_historian", "args": {"hours": 6, "resolution_min": 5}},
+            {"tool": "query_maintenance", "args": {}},
+        ],
+        "noise_burst": [
+            {"tool": "query_historian", "args": {"hours": 1, "resolution_min": 1}},
+            {"tool": "query_events", "args": {"event_type": "equipment_startup"}},
+        ],
+        "rate_of_change_violation": [
+            {"tool": "query_historian", "args": {"hours": 6, "resolution_min": 5}},
+            {"tool": "query_events", "args": {"event_type": "process_upset"}},
+            {"tool": "query_maintenance", "args": {}},
+        ],
+        "correlation_breakdown": [
+            {"tool": "query_historian", "args": {"hours": 24, "resolution_min": 5}},
+            {"tool": "query_events", "args": {"event_type": "grade_change"}},
+        ],
+        "cross_sensor_inconsistency": [
+            {"tool": "query_historian", "args": {"hours": 24, "resolution_min": 5}},
+            {"tool": "query_lab_results", "args": {"param": "assay"}},
+        ],
+        "cip_temperature_low": [
+            {"tool": "query_historian", "args": {"hours": 6, "resolution_min": 5}},
+            {"tool": "query_maintenance", "args": {}},
+        ],
+        "fda_audit_trail_concern": [
+            {"tool": "query_maintenance", "args": {}},
+            {"tool": "query_lab_results", "args": {"param": "assay"}},
+        ],
+        "impossible_readings": [
+            {"tool": "query_historian", "args": {"hours": 6, "resolution_min": 5}},
+            {"tool": "query_maintenance", "args": {}},
+        ],
+    }
+
+    TOOL_EXECUTORS = {
+        "query_historian": _historian_api,
+        "query_events": _mes_api,
+        "query_maintenance": _cmms_api,
+        "query_lab_results": _lims_api,
+    }
+
+    GUIDANCE = {
+        "sensor_drift": "Drift suggests gradual calibration degradation. Checked historian for long-term trend, looked for grade changes that might explain it, and checked maintenance history for recent calibration.",
+        "stuck_value": "Stuck value usually means a communication failure. Checked historian for the stuck window and maintenance history for any recent work on this loop.",
+        "noise_burst": "Noise bursts often come from electrical interference. Checked historian at high resolution and looked for nearby equipment startups.",
+        "rate_of_change_violation": "Rapid changes suggest a process upset. Checked historian for the event window, looked for process upsets, and checked maintenance for valve/controller issues.",
+        "correlation_breakdown": "One sensor changed behavior. Checked historian for both tags and looked for grade changes that might explain a process shift.",
+        "cross_sensor_inconsistency": "Silent Lie — the sensor reads plausibly but contradicts its witnesses. Checked historian for both suspect and witness tags, then checked lab results for product impact.",
+        "cip_temperature_low": "CIP temperature below sterilization threshold. Checked historian for the CIP loop and maintenance on the steam heater.",
+        "fda_audit_trail_concern": "Audit trail concerns are about compliance, not process. Checked maintenance for system changes and lab results for concurrent product impact.",
+        "impossible_readings": "Impossible readings mean the sensor is clearly broken. Checked historian for when it started and maintenance for recent repair/recalibration.",
     }
 
     def __init__(self):
@@ -39,7 +90,6 @@ class InvestigationAgent(BaseAgent):
             model=settings.LLM_MODEL, temperature=0.1,
             api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL,
         )
-        self.tools = [query_historian, query_events, query_maintenance, query_lab_results]
 
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         await self.connect_db()
@@ -65,25 +115,8 @@ class InvestigationAgent(BaseAgent):
                 simulator=sim,
             )
 
-            findings = []
+            all_tool_results = []
             all_reasoning = []
-
-            react_agent = create_react_agent(
-                model=self.llm,
-                tools=self.tools,
-                prompt="You are a pharma process engineer investigating sensor anomalies in a manufacturing plant. "
-                       "You have access to 4 tools that query external systems: the PI Historian (time series data), "
-                       "the MES (process events like grade changes and batch starts), the CMMS (maintenance history), "
-                       "and LIMS (lab quality results). "
-                       "Investigate each anomaly by calling the RIGHT tools for that anomaly type. "
-                       "Different anomalies need different investigation paths: "
-                       "- Drift: historian (long window) → events (grade change?) → maintenance (calibration?) "
-                       "- Stuck value: historian (short window) → maintenance (wiring/comm?) "
-                       "- Noise burst: historian (high-res) → events (equipment startup?) "
-                       "- Cross-sensor inconsistency: historian (both tags) → lab results (product impact?) "
-                       "Do NOT call all tools on every anomaly — only the relevant ones. "
-                       "After your investigation, provide a concise 2-3 sentence summary of your findings.",
-            )
 
             for anomaly in anomalies:
                 tag_id = anomaly.get("tag_id", "Unknown")
@@ -96,59 +129,79 @@ class InvestigationAgent(BaseAgent):
                     except Exception:
                         evidence = {}
 
-                guidance = self.ANOMALY_GUIDANCE.get(anomaly_type, "Investigate this anomaly using the appropriate tools.")
+                tool_plan = self.ANOMALY_TOOL_MAP.get(anomaly_type, [
+                    {"tool": "query_historian", "args": {"hours": 24, "resolution_min": 15}}
+                ])
+                guidance = self.GUIDANCE.get(anomaly_type, "Investigated this anomaly using available tools.")
 
-                user_msg = (
-                    f"Investigate anomaly on {tag_id}: {anomaly_type.replace('_', ' ')} "
-                    f"(confidence: {confidence:.0%}).\n"
-                    f"Evidence: {json.dumps(evidence, default=str)[:300]}\n\n"
-                    f"Investigation guidance: {guidance}\n\n"
-                    f"Use the tools to investigate. Only call tools that are relevant to this anomaly type."
-                )
+                anomaly_results = []
+                steps = [f"--- {tag_id}: {anomaly_type} (confidence: {confidence:.0%}) ---"]
+                steps.append(f"Guidance: {guidance}")
 
-                steps = []
-                try:
-                    result = await react_agent.ainvoke(
-                        {"messages": [{"role": "user", "content": user_msg}]},
-                    )
-                    for msg in result.get("messages", []):
-                        if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                            for tc in msg.tool_calls:
-                                tool_name = tc.get('name', 'unknown')
-                                tool_args = tc.get('args', {})
-                                steps.append(f"Called {tool_name}({json.dumps(tool_args) if isinstance(tool_args, dict) else tool_args})")
-                        elif hasattr(msg, 'type') and msg.type == 'tool':
-                            content = msg.content[:150] if msg.content else ""
-                            steps.append(f"Result: {content}")
-                        elif hasattr(msg, 'content') and msg.content and not hasattr(msg, 'tool_calls'):
-                            if msg.content.strip():
-                                steps.append(f"Agent: {msg.content.strip()[:200]}")
-                except Exception as e:
-                    print(f"[InvestigationAgent] ReAct failed for {tag_id}: {e}")
-                    steps.append(f"Investigation failed: {str(e)[:100]}")
+                for tool_spec in tool_plan:
+                    tool_name = tool_spec["tool"]
+                    tool_args = {"tag_id": tag_id, **tool_spec.get("args", {})}
+                    executor = self.TOOL_EXECUTORS.get(tool_name)
+                    if not executor:
+                        continue
+                    try:
+                        result = executor(**tool_args)
+                        result_str = json.dumps(result, default=str)[:300]
+                        anomaly_results.append({"tool": tool_name, "args": tool_args, "result": result})
+                        steps.append(f"Called {tool_name}({json.dumps({k: v for k, v in tool_args.items() if k != 'tag_id'})})")
+                        steps.append(f"Result: {result_str[:150]}")
+                    except Exception as e:
+                        steps.append(f"Called {tool_name} → Error: {str(e)[:80]}")
 
-                agent_text = ""
-                for s in steps:
-                    if s.startswith("Agent: "):
-                        agent_text = s[7:]
-                        break
-
-                reasoning_text = "\n".join(steps) if steps else ""
-
-                finding = guardrail.sanitize_text(f"Investigation of {tag_id} ({anomaly_type}): {agent_text}") if agent_text else f"No investigation result for {tag_id}"
-                findings.append({
+                all_tool_results.append({
                     "tag_id": tag_id,
                     "anomaly_type": anomaly_type,
-                    "investigation_summary": finding,
-                    "tools_called": [s for s in steps if s.startswith("Called ")],
+                    "evidence_summary": json.dumps(evidence, default=str)[:200],
+                    "tool_results": anomaly_results,
+                    "guidance": guidance,
                 })
-                all_reasoning.append(f"--- {tag_id}: {anomaly_type} ---\n{reasoning_text}")
+                all_reasoning.append("\n".join(steps))
 
-            combined_reasoning = "\n\n".join(all_reasoning)
+            combined_tool_data = ""
+            for tr in all_tool_results:
+                combined_tool_data += f"\n\nAnomaly: {tr['tag_id']} ({tr['anomaly_type']})\n"
+                combined_tool_data += f"Evidence: {tr['evidence_summary']}\n"
+                combined_tool_data += f"Guidance: {tr['guidance']}\n"
+                for r in tr.get("tool_results", []):
+                    combined_tool_data += f"Tool {r['tool']}: {json.dumps(r['result'], default=str)[:250]}\n"
+
+            prompt = ChatPromptTemplate.from_messages([
+                ("system",
+                 "You are a pharma process engineer. Summarize investigation findings for {count} anomalies. "
+                 "For each anomaly, write 1-2 sentences about what the tool results reveal. "
+                 "Be concise and specific. Do not repeat tool output verbatim."),
+                ("user", "{tool_data}"),
+            ])
+            chain = prompt | self.llm
+
+            try:
+                llm_response = await chain.ainvoke({"count": len(all_tool_results), "tool_data": combined_tool_data})
+                summary_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
+            except Exception as e:
+                print(f"[InvestigationAgent] LLM summary failed: {e}")
+                summary_text = "Investigation complete. Tool results collected but LLM summary unavailable."
+
+            summary_text = guardrail.sanitize_text(summary_text)
+
+            per_anomaly_summaries = summary_text.split("\n")
+            findings = []
+            for i, tr in enumerate(all_tool_results):
+                finding_text = per_anomaly_summaries[i] if i < len(per_anomaly_summaries) and per_anomaly_summaries[i].strip() else f"Investigation of {tr['tag_id']} ({tr['anomaly_type']}): tools queried, see reasoning log."
+                findings.append({
+                    "tag_id": tr["tag_id"],
+                    "anomaly_type": tr["anomaly_type"],
+                    "investigation_summary": guardrail.sanitize_text(finding_text),
+                    "tools_called": [f"Called {r['tool']}" for r in tr.get("tool_results", [])],
+                })
 
             result = {
                 "investigation_findings": findings,
-                "agent_reasoning": combined_reasoning,
+                "agent_reasoning": "\n\n".join(all_reasoning),
                 "summary": {"total_investigated": len(findings)},
             }
 
