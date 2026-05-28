@@ -100,7 +100,7 @@ function App() {
               <Bot className="w-4.5 h-4.5 text-white" />
             </div>
             <div>
-              <h1 className="text-sm font-bold text-foreground leading-tight">Pharma Data Integrity Inspector</h1>
+              <h1 className="text-sm font-bold text-foreground leading-tight">Process Data Integrity Inspector</h1>
               <p className="text-[10px] text-muted-foreground">5-Stage AI Pipeline</p>
             </div>
           </Link>

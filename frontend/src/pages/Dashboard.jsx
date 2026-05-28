@@ -58,7 +58,7 @@ export default function Dashboard({ liveTags = [] }) {
       <div className="card p-4 bg-gradient-to-br from-slate-700 to-slate-800 text-white border-0">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-bold">Pharma Data Integrity Inspector</h1>
+            <h1 className="text-lg font-bold">Process Data Integrity Inspector</h1>
             <p className="text-slate-300 text-xs">Catches sensor anomalies — including ones that look normal but are wrong.</p>
           </div>
           <div className="flex items-center gap-2">

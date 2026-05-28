@@ -694,40 +694,6 @@ async def reseed_data():
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-async def run_analysis_sync(request: RunAnalysisRequest):
-    """Synchronous analysis for debugging"""
-    try:
-        pipeline = PharmaPipeline()
-        result = await pipeline.run({
-            "hours": request.hours,
-            "tag_ids": request.tag_ids
-        })
-        anomalies = result.get("anomalies", [])
-        profiles = result.get("tag_profiles", {})
-        
-        # Debug: show profile stats for first 3 tags
-        debug_info = {}
-        for tid in list(profiles.keys())[:3]:
-            p = profiles[tid]
-            debug_info[tid] = {"count": p.get("count"), "mean": p.get("mean"), "std": p.get("std")}
-        
-        return {
-            "status": "success",
-            "anomalies_detected": len(anomalies),
-            "anomalies": [
-                {"tag_id": a.get("tag_id"), "anomaly_type": a.get("anomaly_type"), "confidence": float(a.get("confidence", 0))}
-                for a in anomalies
-            ],
-            "tag_profiles_count": len(profiles),
-            "debug_profiles": debug_info,
-            "current_step": result.get("current_step"),
-        }
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/analyze/status/{job_id}")
 async def get_analysis_status(job_id: str):
     """Poll for analysis job status. Returns incremental agent_reasoning and investigation_findings while investigating."""
@@ -1003,7 +969,7 @@ async def clear_anomalies():
 async def get_live_tags():
     """Get live simulated tag values merged with metadata"""
     from datetime import datetime
-    simulator = TagSimulator()
+    simulator = TagSimulator(seed=42)
     readings = simulator.generate_all_tags(datetime.now())
     metadata = simulator.get_tag_metadata()
     meta_map = {m["tag_id"]: m for m in metadata}
@@ -1042,7 +1008,7 @@ async def get_correlation_matrix():
         from sqlalchemy import text as sa_text
         cutoff = dt.utcnow() - td(hours=24)
         
-        simulator = TagSimulator()
+        simulator = TagSimulator(seed=42)
         pairs = simulator.CORRELATED_PAIRS
         results = []
         
@@ -1087,14 +1053,12 @@ async def get_correlation_matrix():
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-    return results
 
 
 @app.get("/stats/causal-groups")
 async def get_causal_groups():
     """Return the causal group definitions and coupling coefficients"""
-    simulator = TagSimulator()
+    simulator = TagSimulator(seed=42)
     groups = simulator.get_causal_groups()
     silent_lie = simulator.get_silent_lie_config()
     return {
